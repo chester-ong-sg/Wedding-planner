@@ -27,7 +27,7 @@ A modern web application for planning wedding seating arrangements, built with N
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/chester-ong-sg/wedding-planner.git
+   git clone https://github.com/chester-ong-sg/Wedding-planner.git
    cd wedding-planner
    ```
 
@@ -66,4 +66,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details.
