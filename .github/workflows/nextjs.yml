@@ -10,7 +10,6 @@ permissions:
   contents: read
   pages: write
   id-token: write
-  deployments: write
 
 # Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
 # However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
@@ -24,26 +23,35 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: 'npm'
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
         id: pages
+
       - name: Install dependencies
         run: |
           echo "Installing dependencies..."
-          npm install --legacy-peer-deps
+          npm install --legacy-peer-deps --verbose
+        continue-on-error: true
+
+      - name: List installed packages
+        run: npm list --depth=0
+
       - name: Build with Next.js
         run: |
           echo "Building Next.js app..."
           npm run build
         env:
+          NODE_ENV: production
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           NEXT_PUBLIC_BASE_PATH: /Wedding-planner
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
