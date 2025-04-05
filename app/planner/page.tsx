@@ -102,45 +102,45 @@ function PlannerContent() {
 
   useEffect(() => {
     const fetchData = async () => {
-      // Use a default user ID for all operations
-      const defaultUserId = "default-user"
-      fetchTables(defaultUserId)
-      fetchGuests(defaultUserId)
+      setLoading(true)
+      try {
+        // Use a default user ID for all operations
+        const defaultUserId = "default-user"
+        
+        // Fetch tables and guests in parallel
+        const [tablesResult, guestsResult] = await Promise.all([
+          supabase
+            .from("tables")
+            .select("*")
+            .eq("user_id", defaultUserId)
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("guests")
+            .select("*")
+            .eq("user_id", defaultUserId)
+            .order("created_at", { ascending: true })
+        ])
+
+        if (tablesResult.error) {
+          console.error("Error fetching tables:", tablesResult.error)
+        } else {
+          setTables(tablesResult.data || [])
+        }
+
+        if (guestsResult.error) {
+          console.error("Error fetching guests:", guestsResult.error)
+        } else {
+          setGuests(guestsResult.data || [])
+        }
+      } catch (error) {
+        console.error("Error fetching data:", error)
+      } finally {
+        setLoading(false)
+      }
     }
 
     fetchData()
   }, [supabase])
-
-  const fetchTables = async (userId: string) => {
-    const { data, error } = await supabase
-      .from("tables")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: true })
-
-    if (error) {
-      console.error("Error fetching tables:", error)
-      return
-    }
-
-    setTables(data || [])
-    setLoading(false)
-  }
-
-  const fetchGuests = async (userId: string) => {
-    const { data, error } = await supabase
-      .from("guests")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: true })
-
-    if (error) {
-      console.error("Error fetching guests:", error)
-      return
-    }
-
-    setGuests(data || [])
-  }
 
   const [newTable, setNewTable] = useState<{
     name: string
@@ -153,49 +153,26 @@ function PlannerContent() {
   })
 
   const handleAddTable = async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
-      console.error("No session found")
+    if (!newTable.name || newTable.capacity <= 0) return
+
+    const tableToAdd = {
+      ...newTable,
+      user_id: "default-user",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    const { data, error } = await supabase.from("tables").insert(tableToAdd).select()
+
+    if (error) {
+      console.error("Error adding table:", error)
       return
     }
 
-    try {
-      const tableCount = tables.length
-      const row = Math.floor(tableCount / 5)
-      const col = tableCount % 5
-
-      const tableData = {
-        name: newTable.name || `Table ${tableCount + 1}`,
-        shape: newTable.shape,
-        capacity: newTable.capacity,
-        x: col * 280 + 50,
-        y: row * 220 + 50,
-        user_id: session.user.id,
-      }
-
-      const { data, error } = await supabase
-        .from("tables")
-        .insert([tableData])
-        .select()
-        .single()
-
-      if (error) {
-        console.error("Error adding table:", error.message)
-        return
-      }
-
-      if (!data) {
-        console.error("No data returned after adding table")
-        return
-      }
-
-      const newTables = [...tables, data]
-      setTables(newTables)
-      saveState(newTables, guests)
+    if (data) {
+      setTables((prev) => [...prev, data[0]])
       setNewTable({ name: "", capacity: 8, shape: "round" })
       setIsAddTableOpen(false)
-    } catch (error) {
-      console.error("Unexpected error adding table:", error)
     }
   }
 
@@ -229,34 +206,27 @@ function PlannerContent() {
   }
 
   const handleAddGuest = async (data: Partial<Guest>) => {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
-      console.error("No session found")
+    if (!data.name) {
+      console.error("Guest name is required")
       return
     }
 
-    try {
-      const { data: newGuest, error } = await supabase
-        .from("guests")
-        .insert([{ ...data, user_id: session.user.id }])
-        .select()
-        .single()
+    const guestToAdd = {
+      ...data,
+      user_id: "default-user",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
 
-      if (error) {
-        console.error("Error adding guest:", error.message)
-        return
-      }
+    const { data: newGuest, error } = await supabase.from("guests").insert(guestToAdd).select()
 
-      if (!newGuest) {
-        console.error("No data returned after adding guest")
-        return
-      }
+    if (error) {
+      console.error("Error adding guest:", error)
+      return
+    }
 
-      const newGuests = [...guests, newGuest]
-      setGuests(newGuests)
-      saveState(tables, newGuests)
-    } catch (error) {
-      console.error("Unexpected error adding guest:", error)
+    if (newGuest) {
+      setGuests((prev) => [...prev, newGuest[0]])
     }
   }
 
