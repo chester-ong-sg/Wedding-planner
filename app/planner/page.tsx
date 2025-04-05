@@ -104,24 +104,31 @@ function PlannerContent() {
     const fetchData = async () => {
       setLoading(true)
       try {
-        // Auto-login as chesterongpeixuan@gmail.com
-        const { data: { session }, error: sessionError } = await supabase.auth.signInWithPassword({
-          email: 'chesterongpeixuan@gmail.com',
-          password: 'Dragonag3' // Updated password
-        })
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
         
         if (sessionError) {
-          console.error("Error signing in:", sessionError)
+          console.error("Error getting session:", sessionError)
+          router.push('/login')
+          return
+        }
+
+        if (!session) {
+          console.error("No active session")
+          router.push('/login')
           return
         }
 
         // Use the user ID from the session
-        const userId = session?.user?.id
+        const userId = session.user.id
         
         if (!userId) {
-          console.error("No user ID found after login")
+          console.error("No user ID found")
+          router.push('/login')
           return
         }
+        
+        // Check if this is the guest account
+        const isGuest = session.user.email === "guest@gmail.com"
         
         // Fetch tables and guests in parallel
         const [tablesResult, guestsResult] = await Promise.all([
@@ -141,12 +148,78 @@ function PlannerContent() {
           console.error("Error fetching tables:", tablesResult.error)
         } else {
           setTables(tablesResult.data || [])
+          
+          // If this is the guest account and no tables exist, create a default table
+          if (isGuest && tablesResult.data.length === 0) {
+            const defaultTable = {
+              name: "Main Table",
+              shape: "round" as const,
+              capacity: 8,
+              x: 0,
+              y: 0,
+              user_id: userId,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }
+            
+            const { data: newTable, error: tableError } = await supabase
+              .from("tables")
+              .insert(defaultTable)
+              .select()
+              
+            if (tableError) {
+              console.error("Error creating default table:", tableError)
+            } else if (newTable) {
+              setTables([newTable[0]])
+            }
+          }
         }
 
         if (guestsResult.error) {
           console.error("Error fetching guests:", guestsResult.error)
         } else {
           setGuests(guestsResult.data || [])
+          
+          // If this is the guest account and no guests exist, create some default guests
+          if (isGuest && guestsResult.data.length === 0) {
+            const defaultGuests = [
+              {
+                name: "John Doe",
+                rsvp_status: "attending" as const,
+                table_id: null,
+                user_id: userId,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              },
+              {
+                name: "Jane Doe",
+                rsvp_status: "attending" as const,
+                table_id: null,
+                user_id: userId,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              },
+              {
+                name: "Bob Smith",
+                rsvp_status: "pending" as const,
+                table_id: null,
+                user_id: userId,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              }
+            ]
+            
+            const { data: newGuests, error: guestsError } = await supabase
+              .from("guests")
+              .insert(defaultGuests)
+              .select()
+              
+            if (guestsError) {
+              console.error("Error creating default guests:", guestsError)
+            } else if (newGuests) {
+              setGuests(newGuests)
+            }
+          }
         }
       } catch (error) {
         console.error("Error fetching data:", error)
@@ -156,7 +229,7 @@ function PlannerContent() {
     }
 
     fetchData()
-  }, [supabase])
+  }, [supabase, router])
 
   const [newTable, setNewTable] = useState<{
     name: string

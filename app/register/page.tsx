@@ -26,6 +26,71 @@ export default function RegisterPage() {
     setLoading(true)
 
     try {
+      // Special case for guest account
+      if (email === "guest@gmail.com" && password === "123") {
+        // Check if guest account already exists
+        const { data: existingUser, error: checkError } = await supabase.auth.signInWithPassword({
+          email: "guest@gmail.com",
+          password: "123",
+        })
+
+        if (existingUser?.session) {
+          // Guest account exists, just log in
+          toast({
+            title: "Success",
+            description: "Logged in as guest successfully",
+          })
+          router.push("/planner")
+          return
+        }
+
+        // Create guest account without email verification
+        const { error: signUpError, data } = await supabase.auth.signUp({
+          email: "guest@gmail.com",
+          password: "123",
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
+            data: {
+              is_guest: true,
+            },
+          },
+        })
+
+        if (signUpError) {
+          toast({
+            variant: "destructive",
+            title: "Guest account creation failed",
+            description: signUpError.message,
+          })
+          return
+        }
+
+        // Automatically sign in the guest
+        const { error: signInError, data: signInData } = await supabase.auth.signInWithPassword({
+          email: "guest@gmail.com",
+          password: "123",
+        })
+
+        if (signInError) {
+          toast({
+            variant: "destructive",
+            title: "Guest login failed",
+            description: signInError.message,
+          })
+          return
+        }
+
+        if (signInData?.session) {
+          toast({
+            title: "Guest account created",
+            description: "You have been automatically logged in as guest.",
+          })
+          router.push("/planner")
+          return
+        }
+      }
+
+      // Regular registration flow for non-guest accounts
       const { error: signUpError, data } = await supabase.auth.signUp({
         email,
         password,
@@ -43,8 +108,17 @@ export default function RegisterPage() {
         return
       }
 
+      if (!data?.user) {
+        toast({
+          variant: "destructive",
+          title: "Registration Error",
+          description: "No user data returned after registration",
+        })
+        return
+      }
+
       // Automatically sign in the user after registration
-      const { error: signInError } = await supabase.auth.signInWithPassword({
+      const { error: signInError, data: signInData } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
@@ -59,11 +133,20 @@ export default function RegisterPage() {
         return
       }
 
-      toast({
-        title: "Registration successful",
-        description: "You have been automatically logged in.",
-      })
-      router.push("/planner")
+      if (signInData?.session) {
+        toast({
+          title: "Registration successful",
+          description: "You have been automatically logged in.",
+        })
+        router.push("/planner")
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Auto-login Error",
+          description: "No session created after auto-login",
+        })
+        router.push("/login")
+      }
     } catch (error) {
       toast({
         variant: "destructive",

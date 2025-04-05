@@ -26,7 +26,7 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
@@ -37,12 +37,21 @@ export default function LoginPage() {
           title: "Login failed",
           description: error.message,
         })
-      } else {
+        return
+      }
+
+      if (data?.session) {
         toast({
           title: "Success",
           description: "Logged in successfully",
         })
         router.push("/planner")
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Login Error",
+          description: "No session created after login",
+        })
       }
     } catch (error) {
       toast({
@@ -101,9 +110,14 @@ export default function LoginPage() {
             <Button 
               variant="outline" 
               className="w-full" 
-              onClick={() => router.push("/planner")}
+              onClick={() => {
+                setEmail("guest@gmail.com")
+                setPassword("123")
+                handleLogin(new Event("submit") as any)
+              }}
+              disabled={loading}
             >
-              Continue without login
+              Login as Guest
             </Button>
             <div className="text-center text-sm">
               Don&apos;t have an account?{" "}
