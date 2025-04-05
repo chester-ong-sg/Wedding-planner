@@ -7,14 +7,7 @@ export async function middleware(request: NextRequest) {
   const supabase = createMiddlewareClient({ req: request, res })
 
   // Refresh session if expired
-  const { data: { session } } = await supabase.auth.getSession()
-
-  // If accessing /login or /register while authenticated, redirect to planner
-  if ((request.nextUrl.pathname === '/login' || request.nextUrl.pathname === '/register') && session) {
-    const redirectUrl = request.nextUrl.clone()
-    redirectUrl.pathname = '/planner'
-    return NextResponse.redirect(redirectUrl)
-  }
+  await supabase.auth.getSession()
 
   return res
 }

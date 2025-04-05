@@ -102,17 +102,14 @@ function PlannerContent() {
 
   useEffect(() => {
     const fetchData = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        router.push("/login")
-        return
-      }
-      fetchTables(session.user.id)
-      fetchGuests(session.user.id)
+      // Use a default user ID for all operations
+      const defaultUserId = "default-user"
+      fetchTables(defaultUserId)
+      fetchGuests(defaultUserId)
     }
 
     fetchData()
-  }, [supabase, router])
+  }, [supabase])
 
   const fetchTables = async (userId: string) => {
     const { data, error } = await supabase

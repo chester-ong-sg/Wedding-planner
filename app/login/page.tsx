@@ -98,6 +98,13 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Logging in..." : "Login"}
             </Button>
+            <Button 
+              variant="outline" 
+              className="w-full" 
+              onClick={() => router.push("/planner")}
+            >
+              Continue without login
+            </Button>
             <div className="text-center text-sm">
               Don&apos;t have an account?{" "}
               <Link href="/register" className="underline">
