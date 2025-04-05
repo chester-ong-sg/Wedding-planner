@@ -23,7 +23,9 @@ const nextConfig = {
   },
   typescript: {
     ignoreBuildErrors: true,
-  }
+  },
+  reactStrictMode: true,
+  swcMinify: true
 }
 
 if (userConfig) {
