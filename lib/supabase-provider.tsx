@@ -14,18 +14,16 @@ type SupabaseContext = {
 const Context = createContext<SupabaseContext | undefined>(undefined)
 
 export function SupabaseProvider({ children }: { children: React.ReactNode }) {
-  const [supabase] = useState(() =>
-    createClientComponentClient<Database>({
-      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      supabaseKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    }),
-  )
+  const [supabase] = useState(() => createClientComponentClient<Database>())
 
   useEffect(() => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('Auth state changed:', event, session)
+      if (event === 'SIGNED_OUT') {
+        // Redirect to home page on sign out
+        window.location.href = '/Wedding-planner'
+      }
     })
 
     return () => {
