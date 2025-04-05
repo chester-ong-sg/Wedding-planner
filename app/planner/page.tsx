@@ -104,20 +104,44 @@ function PlannerContent() {
     const fetchData = async () => {
       setLoading(true)
       try {
-        // Use a default user ID for all operations
-        const defaultUserId = "default-user"
+        // First, try to get the current session
+        const { data: { session } } = await supabase.auth.getSession()
+        
+        // If no session, create an anonymous session
+        if (!session) {
+          const { data: { session: anonSession }, error: signInError } = await supabase.auth.signInWithPassword({
+            email: 'anonymous@example.com',
+            password: 'anonymous123'
+          })
+          
+          if (signInError) {
+            // If anonymous user doesn't exist, create it
+            const { data: { user }, error: signUpError } = await supabase.auth.signUp({
+              email: 'anonymous@example.com',
+              password: 'anonymous123'
+            })
+            
+            if (signUpError) {
+              console.error("Error creating anonymous user:", signUpError)
+              return
+            }
+          }
+        }
+
+        // Use the current user's ID or anonymous user's ID
+        const userId = session?.user?.id || 'anonymous'
         
         // Fetch tables and guests in parallel
         const [tablesResult, guestsResult] = await Promise.all([
           supabase
             .from("tables")
             .select("*")
-            .eq("user_id", defaultUserId)
+            .eq("user_id", userId)
             .order("created_at", { ascending: true }),
           supabase
             .from("guests")
             .select("*")
-            .eq("user_id", defaultUserId)
+            .eq("user_id", userId)
             .order("created_at", { ascending: true })
         ])
 
@@ -155,9 +179,12 @@ function PlannerContent() {
   const handleAddTable = async () => {
     if (!newTable.name || newTable.capacity <= 0) return
 
+    const { data: { session } } = await supabase.auth.getSession()
+    const userId = session?.user?.id || 'anonymous'
+
     const tableToAdd = {
       ...newTable,
-      user_id: "default-user",
+      user_id: userId,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }
@@ -211,9 +238,12 @@ function PlannerContent() {
       return
     }
 
+    const { data: { session } } = await supabase.auth.getSession()
+    const userId = session?.user?.id || 'anonymous'
+
     const guestToAdd = {
       ...data,
-      user_id: "default-user",
+      user_id: userId,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }
