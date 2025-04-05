@@ -147,10 +147,15 @@ function PlannerContent() {
         if (tablesResult.error) {
           console.error("Error fetching tables:", tablesResult.error)
         } else {
-          setTables(tablesResult.data || [])
+          // Add updated_at field if it doesn't exist
+          const mappedTables = (tablesResult.data || []).map(table => ({
+            ...table,
+            updated_at: table.updated_at || table.created_at
+          }))
+          setTables(mappedTables)
           
           // If this is the guest account and no tables exist, create a default table
-          if (isGuest && tablesResult.data.length === 0) {
+          if (isGuest && mappedTables.length === 0) {
             const defaultTable = {
               name: "Main Table",
               shape: "round" as const,
@@ -170,7 +175,7 @@ function PlannerContent() {
             if (tableError) {
               console.error("Error creating default table:", tableError)
             } else if (newTable) {
-              setTables([newTable[0]])
+              setTables([{...newTable[0], updated_at: newTable[0].updated_at || newTable[0].created_at}])
             }
           }
         }
@@ -178,31 +183,44 @@ function PlannerContent() {
         if (guestsResult.error) {
           console.error("Error fetching guests:", guestsResult.error)
         } else {
-          setGuests(guestsResult.data || [])
+          // Map database fields to application fields
+          const mappedGuests = (guestsResult.data || []).map(guest => ({
+            ...guest,
+            dietary_restrictions: guest.meal_preference,
+            rsvp_status: guest.rsvp_status === "confirmed" ? "attending" : guest.rsvp_status,
+            updated_at: guest.updated_at || guest.created_at
+          }))
+          setGuests(mappedGuests)
           
           // If this is the guest account and no guests exist, create some default guests
-          if (isGuest && guestsResult.data.length === 0) {
+          if (isGuest && mappedGuests.length === 0) {
             const defaultGuests = [
               {
                 name: "John Doe",
-                rsvp_status: "attending" as const,
+                meal_preference: null,
+                rsvp_status: "confirmed" as const,
                 table_id: null,
+                seat_number: null,
                 user_id: userId,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
               },
               {
                 name: "Jane Doe",
-                rsvp_status: "attending" as const,
+                meal_preference: null,
+                rsvp_status: "confirmed" as const,
                 table_id: null,
+                seat_number: null,
                 user_id: userId,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
               },
               {
                 name: "Bob Smith",
+                meal_preference: null,
                 rsvp_status: "pending" as const,
                 table_id: null,
+                seat_number: null,
                 user_id: userId,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
@@ -217,7 +235,14 @@ function PlannerContent() {
             if (guestsError) {
               console.error("Error creating default guests:", guestsError)
             } else if (newGuests) {
-              setGuests(newGuests)
+              // Map database fields to application fields
+              const mappedNewGuests = newGuests.map(guest => ({
+                ...guest,
+                dietary_restrictions: guest.meal_preference,
+                rsvp_status: guest.rsvp_status === "confirmed" ? "attending" : guest.rsvp_status,
+                updated_at: guest.updated_at || guest.created_at
+              }))
+              setGuests(mappedNewGuests)
             }
           }
         }
@@ -255,6 +280,8 @@ function PlannerContent() {
     const tableToAdd = {
       ...newTable,
       user_id: userId,
+      x: 100, // Default x position
+      y: 100, // Default y position
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }
@@ -316,8 +343,13 @@ function PlannerContent() {
       return
     }
 
+    // Map the application fields to database fields
     const guestToAdd = {
-      ...data,
+      name: data.name,
+      meal_preference: data.dietary_restrictions || null,
+      rsvp_status: data.rsvp_status === "attending" ? "confirmed" : data.rsvp_status,
+      table_id: data.table_id || null,
+      seat_number: null,
       user_id: userId,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -331,15 +363,29 @@ function PlannerContent() {
     }
 
     if (newGuest) {
-      setGuests((prev) => [...prev, newGuest[0]])
+      // Map the database fields back to application fields
+      const mappedGuest = {
+        ...newGuest[0],
+        dietary_restrictions: newGuest[0].meal_preference,
+        rsvp_status: newGuest[0].rsvp_status === "confirmed" ? "attending" : newGuest[0].rsvp_status,
+      }
+      setGuests((prev) => [...prev, mappedGuest])
     }
   }
 
   const handleUpdateGuest = async (id: string, updates: Partial<Guest>) => {
     try {
+      // Map the application fields to database fields
+      const dbUpdates = {
+        name: updates.name,
+        meal_preference: updates.dietary_restrictions,
+        rsvp_status: updates.rsvp_status === "attending" ? "confirmed" : updates.rsvp_status,
+        table_id: updates.table_id,
+      }
+
       const { error } = await supabase
         .from("guests")
-        .update(updates)
+        .update(dbUpdates)
         .eq("id", id)
 
       if (error) {
@@ -347,8 +393,14 @@ function PlannerContent() {
         return
       }
 
+      // Map the database fields back to application fields
       const newGuests = guests.map((guest) => 
-        guest.id === id ? { ...guest, ...updates } : guest
+        guest.id === id ? { 
+          ...guest, 
+          ...updates,
+          dietary_restrictions: updates.dietary_restrictions || guest.dietary_restrictions,
+          rsvp_status: updates.rsvp_status || guest.rsvp_status,
+        } : guest
       )
       setGuests(newGuests)
       saveState(tables, newGuests)
