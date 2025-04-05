@@ -1,5 +1,7 @@
 # Wedding Planner App
 
+[![Deploy to GitHub Pages](https://github.com/chester-ong-sg/Wedding-planner/actions/workflows/nextjs.yml/badge.svg)](https://github.com/chester-ong-sg/Wedding-planner/actions/workflows/nextjs.yml)
+
 A modern web application for planning wedding seating arrangements, built with Next.js, React DnD, and Supabase.
 
 ## Features
