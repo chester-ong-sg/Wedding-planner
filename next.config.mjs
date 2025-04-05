@@ -26,7 +26,9 @@ const nextConfig = {
     webpackBuildWorker: true,
     parallelServerBuildTraces: true,
     parallelServerCompiles: true,
-  }
+  },
+  output: 'export',
+  basePath: '/Wedding-planner',
 }
 
 if (userConfig) {

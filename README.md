@@ -60,9 +60,35 @@ A modern web application for planning wedding seating arrangements, built with N
 2. Run the migration files in the `supabase/migrations` directory
 3. Update your environment variables with the new project credentials
 
+## Deployment
+
+The app is automatically deployed to GitHub Pages when changes are pushed to the main branch. You can view the live version at:
+https://chester-ong-sg.github.io/Wedding-planner/
+
+To deploy your own instance:
+
+1. Fork this repository
+2. Set up GitHub Pages in your repository settings
+3. Add your Supabase environment variables as GitHub repository secrets:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+4. Push to the main branch and GitHub Actions will handle the deployment
+
+## CI/CD
+
+This project uses GitHub Actions for:
+- Continuous Integration (CI)
+  - Automated testing
+  - Code linting
+  - Build verification
+- Continuous Deployment (CD)
+  - Automatic deployment to GitHub Pages
+  - Environment variable management
+  - Build optimization
+
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests.
 
 ## License
 
