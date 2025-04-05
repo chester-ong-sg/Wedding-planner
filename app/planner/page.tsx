@@ -107,7 +107,7 @@ function PlannerContent() {
         // Auto-login as chesterongpeixuan@gmail.com
         const { data: { session }, error: sessionError } = await supabase.auth.signInWithPassword({
           email: 'chesterongpeixuan@gmail.com',
-          password: 'password123' // This should be the actual password
+          password: 'Dragonag3' // Updated password
         })
         
         if (sessionError) {
