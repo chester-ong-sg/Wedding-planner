@@ -13,24 +13,17 @@ try {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'export',
+  basePath: '/Wedding-planner',
+  images: {
+    unoptimized: true,
+  },
   eslint: {
     ignoreDuringBuilds: true,
   },
   typescript: {
     ignoreBuildErrors: true,
-  },
-  basePath: '/Wedding-planner',
-  output: 'export',
-  images: {
-    unoptimized: true,
-  },
-  experimental: {
-    webpackBuildWorker: false,
-    parallelServerBuildTraces: false,
-    parallelServerCompiles: false,
-  },
-  trailingSlash: true,
-  reactStrictMode: true,
+  }
 }
 
 if (userConfig) {
