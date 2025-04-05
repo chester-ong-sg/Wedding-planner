@@ -9,15 +9,6 @@ export async function middleware(request: NextRequest) {
   // Refresh session if expired
   const { data: { session } } = await supabase.auth.getSession()
 
-  // If accessing /planner and not authenticated, redirect to login
-  if (request.nextUrl.pathname.startsWith('/planner')) {
-    if (!session) {
-      const redirectUrl = request.nextUrl.clone()
-      redirectUrl.pathname = '/login'
-      return NextResponse.redirect(redirectUrl)
-    }
-  }
-
   // If accessing /login or /register while authenticated, redirect to planner
   if ((request.nextUrl.pathname === '/login' || request.nextUrl.pathname === '/register') && session) {
     const redirectUrl = request.nextUrl.clone()

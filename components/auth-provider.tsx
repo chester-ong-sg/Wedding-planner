@@ -11,21 +11,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setIsClient(true)
-    const checkAuth = async () => {
-      const { data: { session }, error } = await supabase.auth.getSession()
-      
-      if (error || !session) {
-        router.push('/login')
-        return
-      }
-    }
-
-    checkAuth()
 
     // Set up auth state change listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
-        router.push('/login')
+        router.push('/')
       }
     })
 

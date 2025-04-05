@@ -26,7 +26,7 @@ export default function RegisterPage() {
     setLoading(true)
 
     try {
-      const { error } = await supabase.auth.signUp({
+      const { error: signUpError, data } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -34,19 +34,36 @@ export default function RegisterPage() {
         },
       })
 
-      if (error) {
+      if (signUpError) {
         toast({
           variant: "destructive",
           title: "Registration failed",
-          description: error.message,
+          description: signUpError.message,
         })
-      } else {
+        return
+      }
+
+      // Automatically sign in the user after registration
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+
+      if (signInError) {
         toast({
-          title: "Registration successful",
-          description: "Please check your email for verification.",
+          variant: "destructive",
+          title: "Auto-login failed",
+          description: signInError.message,
         })
         router.push("/login")
+        return
       }
+
+      toast({
+        title: "Registration successful",
+        description: "You have been automatically logged in.",
+      })
+      router.push("/planner")
     } catch (error) {
       toast({
         variant: "destructive",
