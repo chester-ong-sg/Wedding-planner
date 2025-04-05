@@ -27,10 +27,11 @@ jobs:
         with:
           node-version: 20
 
+      - name: Clean npm cache
+        run: npm cache clean --force
+
       - name: Install dependencies
-        run: |
-          npm install --no-audit --no-fund --no-optional --legacy-peer-deps
-          npm list --depth=0
+        run: npm install --no-audit --no-fund
 
       - name: Build
         env:
