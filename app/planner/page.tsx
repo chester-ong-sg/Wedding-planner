@@ -104,32 +104,24 @@ function PlannerContent() {
     const fetchData = async () => {
       setLoading(true)
       try {
-        // First, try to get the current session
-        const { data: { session } } = await supabase.auth.getSession()
+        // Auto-login as chesterongpeixuan@gmail.com
+        const { data: { session }, error: sessionError } = await supabase.auth.signInWithPassword({
+          email: 'chesterongpeixuan@gmail.com',
+          password: 'password123' // This should be the actual password
+        })
         
-        // If no session, create an anonymous session
-        if (!session) {
-          const { data: { session: anonSession }, error: signInError } = await supabase.auth.signInWithPassword({
-            email: 'anonymous@example.com',
-            password: 'anonymous123'
-          })
-          
-          if (signInError) {
-            // If anonymous user doesn't exist, create it
-            const { data: { user }, error: signUpError } = await supabase.auth.signUp({
-              email: 'anonymous@example.com',
-              password: 'anonymous123'
-            })
-            
-            if (signUpError) {
-              console.error("Error creating anonymous user:", signUpError)
-              return
-            }
-          }
+        if (sessionError) {
+          console.error("Error signing in:", sessionError)
+          return
         }
 
-        // Use the current user's ID or anonymous user's ID
-        const userId = session?.user?.id || 'anonymous'
+        // Use the user ID from the session
+        const userId = session?.user?.id
+        
+        if (!userId) {
+          console.error("No user ID found after login")
+          return
+        }
         
         // Fetch tables and guests in parallel
         const [tablesResult, guestsResult] = await Promise.all([
@@ -180,7 +172,12 @@ function PlannerContent() {
     if (!newTable.name || newTable.capacity <= 0) return
 
     const { data: { session } } = await supabase.auth.getSession()
-    const userId = session?.user?.id || 'anonymous'
+    const userId = session?.user?.id
+
+    if (!userId) {
+      console.error("No user ID found")
+      return
+    }
 
     const tableToAdd = {
       ...newTable,
@@ -239,7 +236,12 @@ function PlannerContent() {
     }
 
     const { data: { session } } = await supabase.auth.getSession()
-    const userId = session?.user?.id || 'anonymous'
+    const userId = session?.user?.id
+
+    if (!userId) {
+      console.error("No user ID found")
+      return
+    }
 
     const guestToAdd = {
       ...data,
