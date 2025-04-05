@@ -19,6 +19,8 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  basePath: '/Wedding-planner',
+  output: 'export',
   images: {
     unoptimized: true,
   },
@@ -27,8 +29,6 @@ const nextConfig = {
     parallelServerBuildTraces: true,
     parallelServerCompiles: true,
   },
-  output: 'export',
-  basePath: '/Wedding-planner',
 }
 
 if (userConfig) {
