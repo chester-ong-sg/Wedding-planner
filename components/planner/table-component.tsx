@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef } from "react"
 import { useDrag, useDrop } from "react-dnd"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
@@ -30,20 +30,19 @@ export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGues
   const [name, setName] = useState(table.name)
   const [shape, setShape] = useState<TableShape>(table.shape)
   const [capacity, setCapacity] = useState(table.capacity)
-  const [mounted, setMounted] = useState(false)
 
   // Filter guests to only show those assigned to this table
   const tableGuests = guests.filter(guest => guest.table_id === table.id)
 
-  const [{ isDragging }, drag] = useDrag(() => ({
+  const [{ isDragging }, drag] = useDrag({
     type: "table",
     item: { type: "table", id: table.id },
     collect: (monitor) => ({
       isDragging: !!monitor.isDragging(),
     }),
-  }), [table.id])
+  })
 
-  const [{ isOver }, drop] = useDrop(() => ({
+  const [{ isOver }, drop] = useDrop({
     accept: "guest",
     drop: (item: DragItem) => {
       if (item.type === "guest") {
@@ -58,12 +57,7 @@ export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGues
     collect: (monitor) => ({
       isOver: !!monitor.isOver() && monitor.canDrop(),
     }),
-  }), [tableGuests, table.id, table.capacity])
-
-  // Handle hydration
-  useEffect(() => {
-    setMounted(true)
-  }, [])
+  })
 
   const handleSave = async () => {
     await onUpdate(table.id, {
@@ -95,14 +89,13 @@ export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGues
       pointerEvents: isDragging ? "none" as const : "auto" as const,
       zIndex: isOver ? 1000 : 1,
       userSelect: "none" as const,
-      visibility: mounted ? "visible" as const : "hidden" as const,
     }
 
     return baseStyle
   }
 
   // Create a ref that combines both drag and drop
-  const ref = useRef(null)
+  const ref = useRef<HTMLDivElement>(null)
   drag(drop(ref))
 
   return (
