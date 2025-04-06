@@ -64,6 +64,7 @@ export function CsvImport({ onImport }: CsvImportProps) {
     const nameIndex = headers.indexOf("name")
     const mealIndex = headers.indexOf("meal_preference")
     const rsvpIndex = headers.indexOf("rsvp_status")
+    const tableIndex = headers.indexOf("table")
 
     if (nameIndex === -1) {
       throw new Error("CSV must contain a 'name' column")
@@ -75,7 +76,7 @@ export function CsvImport({ onImport }: CsvImportProps) {
       if (!lines[i].trim()) continue
 
       const values = lines[i].split(",").map((value) => value.trim())
-      const guest: { name: string; meal_preference?: string; rsvp_status?: string } = {
+      const guest: { name: string; meal_preference?: string; rsvp_status?: string; table?: string } = {
         name: values[nameIndex],
       }
 
@@ -85,6 +86,10 @@ export function CsvImport({ onImport }: CsvImportProps) {
 
       if (rsvpIndex !== -1 && values[rsvpIndex]) {
         guest.rsvp_status = values[rsvpIndex]
+      }
+
+      if (tableIndex !== -1 && values[tableIndex]) {
+        guest.table = values[tableIndex]
       }
 
       guests.push(guest)
