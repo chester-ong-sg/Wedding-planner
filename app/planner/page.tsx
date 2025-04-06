@@ -7,6 +7,8 @@ import { DndProvider } from "react-dnd"
 import { HTML5Backend } from "react-dnd-html5-backend"
 import { Sidebar } from "@/components/planner/sidebar-with-edit"
 import { TableComponent } from "@/components/planner/table-component"
+import { ExportCSV } from "@/components/planner/export-csv"
+import { CsvImport } from "@/components/planner/csv-import"
 import { Button } from "@/components/ui/button"
 import { Plus, Undo2, Redo2, Minus, Maximize2 } from "lucide-react"
 import { AuthProvider } from "@/components/auth-provider"
@@ -100,49 +102,135 @@ function PlannerContent() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [undo, redo])
 
+  const [session, setSession] = useState<Session | null>(null)
+
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchSession = async () => {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
         router.push("/login")
         return
       }
-      fetchTables(session.user.id)
-      fetchGuests(session.user.id)
+      setSession(session)
     }
 
-    fetchData()
+    fetchSession()
   }, [supabase, router])
 
-  const fetchTables = async (userId: string) => {
-    const { data, error } = await supabase
-      .from("tables")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: true })
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!session?.user.id) return
 
-    if (error) {
-      console.error("Error fetching tables:", error)
-      return
+      const { data: tablesData, error: tablesError } = await supabase
+        .from("tables")
+        .select("*")
+        .eq("user_id", session.user.id)
+        .order("created_at", { ascending: true })
+
+      if (tablesError) {
+        console.error("Error fetching tables:", tablesError)
+        return
+      }
+
+      const { data: guestsData, error: guestsError } = await supabase
+        .from("guests")
+        .select("*")
+        .eq("user_id", session.user.id)
+        .order("created_at", { ascending: true })
+
+      if (guestsError) {
+        console.error("Error fetching guests:", guestsError)
+        return
+      }
+
+      setTables(tablesData)
+      setGuests(guestsData)
+      setLoading(false)
     }
 
-    setTables(data || [])
-    setLoading(false)
-  }
+    if (session?.user.id) {
+      fetchData()
+    }
+  }, [session, supabase])
 
-  const fetchGuests = async (userId: string) => {
-    const { data, error } = await supabase
-      .from("guests")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: true })
+  const handleImport = async (importedGuests: { name: string; meal_preference?: string; rsvp_status?: string; table?: string }[]) => {
+    if (!session?.user.id) return
 
-    if (error) {
-      console.error("Error fetching guests:", error)
-      return
+    // First, create tables from unique table names
+    const uniqueTableNames = [...new Set(importedGuests.map(guest => guest.table).filter(Boolean))]
+    const tableMap = new Map<string, string>() // Map table names to table IDs
+
+    // Calculate grid positions
+    const GRID_SIZE = 200 // Space between tables
+    const TABLES_PER_ROW = 5 // Maximum tables per row
+    let currentRow = 0
+    let currentCol = 0
+
+    for (const tableName of uniqueTableNames) {
+      if (!tableName) continue
+
+      // Check if table already exists
+      const existingTable = tables.find(t => t.name === tableName)
+      if (existingTable) {
+        tableMap.set(tableName, existingTable.id)
+        continue
+      }
+
+      // Calculate position on grid
+      const x = currentCol * GRID_SIZE + 50 // 50px padding from left
+      const y = currentRow * GRID_SIZE + 50 // 50px padding from top
+
+      // Create new table
+      const { data: tableData, error: tableError } = await supabase
+        .from("tables")
+        .insert({
+          name: tableName,
+          shape: "round",
+          capacity: 10,
+          x,
+          y,
+          user_id: session.user.id,
+        })
+        .select()
+        .single()
+
+      if (tableError) throw tableError
+      if (tableData) {
+        tableMap.set(tableName, tableData.id)
+        setTables(prev => [...prev, tableData])
+        
+        // Update grid position
+        currentCol++
+        if (currentCol >= TABLES_PER_ROW) {
+          currentCol = 0
+          currentRow++
+        }
+      }
     }
 
-    setGuests(data || [])
+    // Then create guests and assign them to tables
+    const newGuests = await Promise.all(
+      importedGuests.map(async (guest) => {
+        const tableId = guest.table ? tableMap.get(guest.table) : undefined
+        const { data, error } = await supabase
+          .from("guests")
+          .insert({
+            name: guest.name,
+            dietary_restrictions: guest.meal_preference,
+            rsvp_status: guest.rsvp_status,
+            table_id: tableId,
+            user_id: session.user.id,
+          })
+          .select()
+          .single()
+
+        if (error) throw error
+        return data
+      })
+    )
+
+    setGuests((prev) => [...prev, ...newGuests])
+    saveState([...tables], [...guests, ...newGuests])
   }
 
   const [newTable, setNewTable] = useState<{
@@ -299,8 +387,8 @@ function PlannerContent() {
   }
 
   const handleZoom = (delta: number) => {
-    setScale((prevScale) => {
-      const newScale = Math.max(0.5, Math.min(2, prevScale + delta * 0.1))
+    setScale((prev) => {
+      const newScale = Math.max(0.5, Math.min(1.5, prev + delta))
       return newScale
     })
   }
@@ -315,8 +403,8 @@ function PlannerContent() {
   const [spacePressed, setSpacePressed] = useState(false)
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Only enable panning with middle mouse button or when holding space
-    if (e.button === 1 || (e.button === 0 && spacePressed)) {
+    // Enable panning with left click, middle mouse button, or when holding space
+    if (e.button === 0 || e.button === 1 || (e.button === 0 && spacePressed)) {
       setIsDragging(true)
       setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y })
     }
@@ -372,159 +460,161 @@ function PlannerContent() {
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div className="flex h-screen overflow-hidden">
-        <Sidebar
-          guests={guests}
-          tables={tables}
-          onAddGuest={handleAddGuest}
-          onUpdateGuest={handleUpdateGuest}
-          onDeleteGuest={handleDeleteGuest}
-        />
-        <div className="flex-1 relative">
-          <div className="absolute top-4 right-4 z-10 flex gap-2">
-            <Dialog open={isAddTableOpen} onOpenChange={setIsAddTableOpen}>
-              <DialogTrigger asChild>
-                <Button className="bg-black hover:bg-gray-800">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Table
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Add New Table</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Table Name</Label>
-                    <Input
-                      id="name"
-                      value={newTable.name}
-                      onChange={(e) => setNewTable(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="Enter table name"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="capacity">Number of Guests</Label>
-                    <Input
-                      id="capacity"
-                      type="number"
-                      min="1"
-                      max="20"
-                      value={newTable.capacity}
-                      onChange={(e) => setNewTable(prev => ({ ...prev, capacity: parseInt(e.target.value) || 8 }))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="shape">Table Shape</Label>
-                    <Select
-                      value={newTable.shape}
-                      onValueChange={(value: "round" | "square" | "rectangular") => 
-                        setNewTable(prev => ({ ...prev, shape: value }))
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select shape" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="round">Round</SelectItem>
-                        <SelectItem value="square">Square</SelectItem>
-                        <SelectItem value="rectangular">Rectangular</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button onClick={handleAddTable} className="w-full">
-                    Add Table
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
+      <div className="flex h-screen flex-col">
+        <div className="flex h-16 items-center border-b px-4">
+          <div className="flex items-center space-x-4">
             <Button
               variant="outline"
-              size="icon"
-              onClick={undo}
-              disabled={!canUndo}
-              title="Undo (Ctrl/Cmd + Z)"
-            >
-              <Undo2 className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={redo}
-              disabled={!canRedo}
-              title="Redo (Ctrl/Cmd + Shift + Z)"
-            >
-              <Redo2 className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => handleZoom(0.1)}
-              title="Zoom in"
+              size="sm"
+              onClick={() => setScale((prev) => Math.min(prev + 0.1, 1.5))}
             >
               <Plus className="h-4 w-4" />
             </Button>
             <Button
               variant="outline"
-              size="icon"
-              onClick={() => handleZoom(-0.1)}
-              title="Zoom out"
+              size="sm"
+              onClick={() => setScale((prev) => Math.max(prev - 0.1, 0.5))}
             >
               <Minus className="h-4 w-4" />
             </Button>
             <Button
               variant="outline"
-              size="icon"
-              onClick={() => {
-                setScale(0.7)
-                setPosition({ x: 0, y: 0 })
-              }}
-              title="Reset zoom"
+              size="sm"
+              onClick={() => setScale(0.7)}
             >
               <Maximize2 className="h-4 w-4" />
             </Button>
-          </div>
-          <div 
-            className="w-full h-full overflow-hidden"
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-            onWheel={handleWheel}
-            style={{ cursor: isDragging ? 'grabbing' : 'default' }}
-          >
-            <div
-              style={{
-                transform: `scale(${scale}) translate(${position.x}px, ${position.y}px)`,
-                transformOrigin: "center",
-                transition: isDragging ? "none" : "transform 0.1s ease-out",
-              }}
+            <div className="h-6 w-px bg-border" />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={undo}
+              disabled={!canUndo}
             >
-              <div 
-                className="absolute inset-0 bg-grid" 
+              <Undo2 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={redo}
+              disabled={!canRedo}
+            >
+              <Redo2 className="h-4 w-4" />
+            </Button>
+            <div className="h-6 w-px bg-border" />
+            <CsvImport onImport={handleImport} />
+            <ExportCSV guests={guests} tables={tables} />
+          </div>
+        </div>
+        <div className="flex h-screen overflow-hidden">
+          <Sidebar
+            guests={guests}
+            tables={tables}
+            onAddGuest={handleAddGuest}
+            onUpdateGuest={handleUpdateGuest}
+            onDeleteGuest={handleDeleteGuest}
+          />
+          <div className="flex-1 relative">
+            <div className="absolute top-4 right-4 z-10 flex gap-2">
+              <Dialog open={isAddTableOpen} onOpenChange={setIsAddTableOpen}>
+                <DialogTrigger asChild>
+                  <Button className="bg-black hover:bg-gray-800">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Table
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Add New Table</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="name">Table Name</Label>
+                      <Input
+                        id="name"
+                        value={newTable.name}
+                        onChange={(e) => setNewTable(prev => ({ ...prev, name: e.target.value }))}
+                        placeholder="Enter table name"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="capacity">Number of Guests</Label>
+                      <Input
+                        id="capacity"
+                        type="number"
+                        min="1"
+                        max="20"
+                        value={newTable.capacity}
+                        onChange={(e) => setNewTable(prev => ({ ...prev, capacity: parseInt(e.target.value) || 8 }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="shape">Table Shape</Label>
+                      <Select
+                        value={newTable.shape}
+                        onValueChange={(value: "round" | "square" | "rectangular") => 
+                          setNewTable(prev => ({ ...prev, shape: value }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select shape" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="round">Round</SelectItem>
+                          <SelectItem value="square">Square</SelectItem>
+                          <SelectItem value="rectangular">Rectangular</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button onClick={handleAddTable} className="w-full">
+                      Add Table
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
+            <div 
+              className="w-full h-full overflow-hidden"
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
+              onWheel={handleWheel}
+              style={{ cursor: isDragging ? 'grabbing' : 'default' }}
+            >
+              <div
                 style={{
-                  backgroundImage: `
-                    linear-gradient(to right, #e5e7eb 1px, transparent 1px),
-                    linear-gradient(to bottom, #e5e7eb 1px, transparent 1px)
-                  `,
-                  backgroundSize: "280px 220px",
-                  backgroundPosition: "50px 50px",
-                  width: "10000px",
-                  height: "10000px",
-                  left: "-5000px",
-                  top: "-5000px",
+                  transform: `scale(${scale}) translate(${position.x}px, ${position.y}px)`,
+                  transformOrigin: "center",
+                  transition: isDragging ? "none" : "transform 0.1s ease-out",
                 }}
-              />
-              {tables.map((table) => (
-                <TableComponent
-                  key={table.id}
-                  table={table}
-                  guests={guests.filter((guest) => guest.table_id === table.id)}
-                  onUpdate={handleUpdateTable}
-                  onDelete={handleDeleteTable}
-                  onUpdateGuest={handleUpdateGuest}
+              >
+                <div 
+                  className="absolute inset-0 bg-grid" 
+                  style={{
+                    backgroundImage: `
+                      linear-gradient(to right, #e5e7eb 1px, transparent 1px),
+                      linear-gradient(to bottom, #e5e7eb 1px, transparent 1px)
+                    `,
+                    backgroundSize: "280px 220px",
+                    backgroundPosition: "50px 50px",
+                    width: "10000px",
+                    height: "10000px",
+                    left: "-5000px",
+                    top: "-5000px",
+                  }}
                 />
-              ))}
+                {tables.map((table) => (
+                  <TableComponent
+                    key={table.id}
+                    table={table}
+                    guests={guests.filter((guest) => guest.table_id === table.id)}
+                    onUpdate={handleUpdateTable}
+                    onDelete={handleDeleteTable}
+                    onUpdateGuest={handleUpdateGuest}
+                  />
+                ))}
+              </div>
             </div>
           </div>
         </div>
