@@ -45,6 +45,7 @@ function PlannerContent() {
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [isAddTableOpen, setIsAddTableOpen] = useState(false)
+  const [session, setSession] = useState<Session | null>(null)
 
   // History management
   const [history, setHistory] = useState<State[]>([])
@@ -101,31 +102,26 @@ function PlannerContent() {
   }, [undo, redo])
 
   useEffect(() => {
+    const fetchSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        router.push('/login')
+        return
+      }
+      setSession(session)
+    }
+
+    fetchSession()
+  }, [supabase, router])
+
+  useEffect(() => {
     const fetchData = async () => {
+      if (!session?.user.id) return
+      
       setLoading(true)
       try {
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-        
-        if (sessionError) {
-          console.error("Error getting session:", sessionError)
-          router.push('/login')
-          return
-        }
-
-        if (!session) {
-          console.error("No active session")
-          router.push('/login')
-          return
-        }
-
         // Use the user ID from the session
         const userId = session.user.id
-        
-        if (!userId) {
-          console.error("No user ID found")
-          router.push('/login')
-          return
-        }
         
         // Check if this is the guest account
         const isGuest = session.user.email === "guest@gmail.com"
@@ -254,7 +250,7 @@ function PlannerContent() {
     }
 
     fetchData()
-  }, [supabase, router])
+  }, [supabase, router, session])
 
   const [newTable, setNewTable] = useState<{
     name: string
