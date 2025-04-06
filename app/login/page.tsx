@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useSupabase } from "@/lib/supabase-provider"
@@ -10,21 +10,44 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { useToast } from "@/components/ui/use-toast"
 import { CalendarHeart } from "lucide-react"
+import { toast } from "sonner"
 
 export default function LoginPage() {
   const router = useRouter()
   const { supabase } = useSupabase()
-  const { toast } = useToast()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [loading, setLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [lastAttemptTime, setLastAttemptTime] = useState<number>(0)
+
+  // Check if user is already logged in
+  useEffect(() => {
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        router.push("/planner")
+      }
+    }
+    
+    checkSession()
+  }, [supabase, router])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLoading(true)
-
+    setError(null)
+    
+    // Check if we're within the rate limit window (5 seconds)
+    const now = Date.now()
+    if (now - lastAttemptTime < 5000) {
+      setError("Please wait a few seconds before trying again")
+      return
+    }
+    
+    setIsLoading(true)
+    setLastAttemptTime(now)
+    
     try {
       const { error } = await supabase.auth.signInWithPassword({
         email,
@@ -32,26 +55,20 @@ export default function LoginPage() {
       })
 
       if (error) {
-        toast({
-          variant: "destructive",
-          title: "Login failed",
-          description: error.message,
-        })
-      } else {
-        toast({
-          title: "Success",
-          description: "Logged in successfully",
-        })
-        router.push("/planner")
+        if (error.message.includes("rate limit")) {
+          setError("Too many login attempts. Please wait a few minutes before trying again.")
+        } else {
+          setError(error.message)
+        }
+        return
       }
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Login Error",
-        description: "An error occurred during login",
-      })
+
+      router.push("/planner")
+    } catch (err) {
+      console.error("Login error:", err)
+      setError("An unexpected error occurred. Please try again later.")
     } finally {
-      setLoading(false)
+      setIsLoading(false)
     }
   }
 
@@ -95,8 +112,8 @@ export default function LoginPage() {
             </div>
           </CardContent>
           <CardFooter className="flex flex-col space-y-4">
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Logging in..." : "Login"}
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? "Logging in..." : "Login"}
             </Button>
             <div className="text-center text-sm">
               Don&apos;t have an account?{" "}

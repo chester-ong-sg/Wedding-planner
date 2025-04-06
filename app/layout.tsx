@@ -1,7 +1,7 @@
 import type React from "react"
 import { Inter } from "next/font/google"
 import { ThemeProvider } from "@/components/theme-provider"
-import { Toaster } from "@/components/ui/toaster"
+import { Toaster } from "sonner"
 import { SupabaseProvider } from "@/lib/supabase-provider"
 import "@/styles/globals.css"
 
@@ -27,7 +27,7 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
           <SupabaseProvider>
             {children}
-            <Toaster />
+            <Toaster richColors position="top-center" />
           </SupabaseProvider>
         </ThemeProvider>
       </body>

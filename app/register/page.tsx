@@ -19,42 +19,63 @@ export default function RegisterPage() {
   const { toast } = useToast()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [loading, setLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [lastAttemptTime, setLastAttemptTime] = useState<number>(0)
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLoading(true)
-
+    setError(null)
+    
+    // Check if we're within the rate limit window (5 seconds)
+    const now = Date.now()
+    if (now - lastAttemptTime < 5000) {
+      setError("Please wait a few seconds before trying again")
+      return
+    }
+    
+    setIsLoading(true)
+    setLastAttemptTime(now)
+    
     try {
-      const { error } = await supabase.auth.signUp({
+      // First check if user exists
+      const { data: existingUser, error: checkError } = await supabase.auth.signInWithPassword({
         email,
         password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
-        },
       })
 
-      if (error) {
-        toast({
-          variant: "destructive",
-          title: "Registration failed",
-          description: error.message,
+      if (checkError && !checkError.message.includes("rate limit")) {
+        // User doesn't exist, create new account
+        const { error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
+          },
         })
-      } else {
-        toast({
-          title: "Registration successful",
-          description: "Please check your email for verification.",
+
+        if (signUpError) {
+          if (signUpError.message.includes("rate limit")) {
+            setError("Too many attempts. Please wait a few minutes before trying again.")
+          } else {
+            setError(signUpError.message)
+          }
+          return
+        }
+
+        toast.success("Registration successful", {
+          description: "Please check your email to verify your account.",
         })
         router.push("/login")
+      } else if (existingUser) {
+        // User exists, redirect to planner
+        router.push("/planner")
       }
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Registration Error",
-        description: "An error occurred during registration",
-      })
+    } catch (err) {
+      console.error("Registration error:", err)
+      setError("An unexpected error occurred. Please try again later.")
     } finally {
-      setLoading(false)
+      setIsLoading(false)
     }
   }
 
@@ -96,8 +117,8 @@ export default function RegisterPage() {
             </div>
           </CardContent>
           <CardFooter className="flex flex-col space-y-4">
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Registering..." : "Register"}
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? "Registering..." : "Register"}
             </Button>
             <div className="text-center text-sm">
               Already have an account?{" "}

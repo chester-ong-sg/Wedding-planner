@@ -22,7 +22,7 @@ export function SupabaseProvider({ children }: { children: React.ReactNode }) {
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
         // Redirect to home page on sign out
-        window.location.href = '/Wedding-planner'
+        window.location.href = '/'
       }
     })
 
