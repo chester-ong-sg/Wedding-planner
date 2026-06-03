@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { createBrowserClient } from "@supabase/ssr"
 import { DndProvider } from "react-dnd"
 import { HTML5Backend } from "react-dnd-html5-backend"
 import { Sidebar } from "@/components/planner/sidebar-with-edit"
@@ -38,7 +38,9 @@ interface State {
 
 function PlannerContent() {
   const router = useRouter()
-  const supabase = createClientComponentClient()
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  const supabase = url && key ? createBrowserClient(url, key) : null
   const [tables, setTables] = useState<Table[]>([])
   const [guests, setGuests] = useState<Guest[]>([])
   const [loading, setLoading] = useState(true)
@@ -105,6 +107,11 @@ function PlannerContent() {
   const [session, setSession] = useState<Session | null>(null)
 
   useEffect(() => {
+    if (!supabase) {
+      router.push("/login")
+      return
+    }
+
     const fetchSession = async () => {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
