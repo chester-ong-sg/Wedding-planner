@@ -1,35 +1,17 @@
-import { createServerClient } from '@supabase/ssr'
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+import { type NextRequest } from 'next/server'
+import { createClient } from '@/utils/supabase/middleware'
 
 export async function middleware(request: NextRequest) {
-  const res = NextResponse.next()
+  const { supabase, supabaseResponse } = createClient(request)
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  if (!url || !key) return res
+  if (supabase) {
+    // Refresh session if expired — keep cookies in sync
+    await supabase.auth.getSession()
+  }
 
-  const supabase = createServerClient(
-    url,
-    key,
-    {
-      cookies: {
-        getAll: () => request.cookies.getAll(),
-        setAll: (cookiesToSet) => {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            res.cookies.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
-
-  // Refresh session if expired
-  await supabase.auth.getSession()
-
-  return res
+  return supabaseResponse
 }
 
 export const config = {
   matcher: ['/', '/login', '/register', '/planner', '/planner/:path*'],
-} 
+}

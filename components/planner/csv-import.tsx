@@ -57,9 +57,11 @@ export function CsvImport({ onImport }: CsvImportProps) {
     reader.readAsText(file)
   }
 
+  const stripQuotes = (value: string) => value.trim().replace(/^"|"$/g, "")
+
   const parseCsv = (csvData: string) => {
-    const lines = csvData.split("\n")
-    const headers = lines[0].split(",").map((header) => header.trim().toLowerCase())
+    const lines = csvData.split(/\r?\n/)
+    const headers = lines[0].split(",").map((h) => stripQuotes(h).toLowerCase())
 
     const nameIndex = headers.indexOf("name")
     const mealIndex = headers.indexOf("meal_preference")
@@ -75,7 +77,7 @@ export function CsvImport({ onImport }: CsvImportProps) {
     for (let i = 1; i < lines.length; i++) {
       if (!lines[i].trim()) continue
 
-      const values = lines[i].split(",").map((value) => value.trim())
+      const values = lines[i].split(",").map(stripQuotes)
       const guest: { name: string; meal_preference?: string; rsvp_status?: string; table?: string } = {
         name: values[nameIndex],
       }

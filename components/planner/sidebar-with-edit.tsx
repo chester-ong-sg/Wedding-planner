@@ -6,6 +6,16 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { GuestForm } from "@/components/planner/guest-form"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Plus, Search, Pencil, Trash } from "lucide-react"
 import type { Guest, Table } from "@/types/planner"
@@ -28,6 +38,7 @@ export function Sidebar({ guests, tables, onAddGuest, onUpdateGuest, onDeleteGue
   const [searchQuery, setSearchQuery] = useState("")
   const [isAddGuestOpen, setIsAddGuestOpen] = useState(false)
   const [editingGuest, setEditingGuest] = useState<Guest | null>(null)
+  const [deletingGuest, setDeletingGuest] = useState<Guest | null>(null)
 
   const guestsByTable = guests.reduce((acc, guest) => {
     const tableId = guest.table_id || "unassigned"
@@ -85,7 +96,7 @@ export function Sidebar({ guests, tables, onAddGuest, onUpdateGuest, onDeleteGue
             variant="ghost"
             size="sm"
             className="text-red-500 hover:text-red-600 hover:bg-red-50"
-            onClick={() => onDeleteGuest(guest.id)}
+            onClick={() => setDeletingGuest(guest)}
           >
             <Trash className="h-4 w-4" />
           </Button>
@@ -186,6 +197,28 @@ export function Sidebar({ guests, tables, onAddGuest, onUpdateGuest, onDeleteGue
           )}
         </DialogContent>
       </Dialog>
+      <AlertDialog open={!!deletingGuest} onOpenChange={(open) => !open && setDeletingGuest(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove guest?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove <span className="font-medium text-foreground">{deletingGuest?.name}</span> from the guest list. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-500 hover:bg-red-600"
+              onClick={() => {
+                if (deletingGuest) onDeleteGuest(deletingGuest.id)
+                setDeletingGuest(null)
+              }}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

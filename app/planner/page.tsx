@@ -48,6 +48,10 @@ function PlannerContent() {
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+  const canvasRef = useRef<HTMLDivElement>(null)
+  const [draggingTable, setDraggingTable] = useState<{
+    id: string; startMouseX: number; startMouseY: number; origX: number; origY: number
+  } | null>(null)
   const [isAddTableOpen, setIsAddTableOpen] = useState(false)
 
   // History management
@@ -112,6 +116,9 @@ function PlannerContent() {
       return
     }
 
+    // DEV ONLY: skip auth so the planner is viewable without a Supabase account
+    if (process.env.NODE_ENV === 'development') return
+
     const fetchSession = async () => {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
@@ -125,6 +132,12 @@ function PlannerContent() {
   }, [supabase, router])
 
   useEffect(() => {
+    // DEV ONLY: skip data fetch, just stop the loading spinner
+    if (process.env.NODE_ENV === 'development' && !session) {
+      setLoading(false)
+      return
+    }
+
     const fetchData = async () => {
       if (!session?.user.id) return
 
@@ -161,6 +174,44 @@ function PlannerContent() {
   }, [session, supabase])
 
   const handleImport = async (importedGuests: { name: string; meal_preference?: string; rsvp_status?: string; table?: string }[]) => {
+    // DEV ONLY: import into local state without Supabase
+    if (process.env.NODE_ENV === 'development' && !session) {
+      const GRID_SIZE = 200
+      const TABLES_PER_ROW = 5
+      let currentRow = 0
+      let currentCol = 0
+      const tableMap = new Map<string, string>()
+      const newTables: typeof tables = []
+
+      const uniqueTableNames = [...new Set(importedGuests.map(g => g.table).filter(Boolean))]
+      for (const tableName of uniqueTableNames) {
+        if (!tableName) continue
+        const existing = tables.find(t => t.name === tableName)
+        if (existing) { tableMap.set(tableName, existing.id); continue }
+        const id = crypto.randomUUID()
+        const x = currentCol * GRID_SIZE + 50
+        const y = currentRow * GRID_SIZE + 50
+        const table = { id, name: tableName, shape: 'round' as const, capacity: 10, x, y, user_id: 'dev' }
+        tableMap.set(tableName, id)
+        newTables.push(table)
+        currentCol++
+        if (currentCol >= TABLES_PER_ROW) { currentCol = 0; currentRow++ }
+      }
+
+      const newGuests = importedGuests.map(g => ({
+        id: crypto.randomUUID(),
+        name: g.name,
+        dietary_restrictions: g.meal_preference ?? null,
+        rsvp_status: g.rsvp_status ?? null,
+        table_id: g.table ? tableMap.get(g.table) ?? null : null,
+        user_id: 'dev',
+      }))
+
+      setTables(prev => { const next = [...prev, ...newTables]; saveState(next, [...guests, ...newGuests]); return next })
+      setGuests(prev => [...prev, ...newGuests])
+      return
+    }
+
     if (!session?.user.id) return
 
     // First, create tables from unique table names
@@ -251,31 +302,35 @@ function PlannerContent() {
   })
 
   const handleAddTable = async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
-      console.error("No session found")
+    const tableCount = tables.length
+    const row = Math.floor(tableCount / 5)
+    const col = tableCount % 5
+    const tableData = {
+      name: newTable.name || `Table ${tableCount + 1}`,
+      shape: newTable.shape,
+      capacity: newTable.capacity,
+      x: col * 280 + 50,
+      y: row * 220 + 50,
+      user_id: isDev ? 'dev' : '',
+    }
+
+    if (isDev) {
+      const data = { id: crypto.randomUUID(), ...tableData }
+      const newTables = [...tables, data]
+      setTables(newTables)
+      saveState(newTables, guests)
+      setNewTable({ name: "", capacity: 8, shape: "round" })
+      setIsAddTableOpen(false)
       return
     }
 
+    const { data: { session } } = await supabase!.auth.getSession()
+    if (!session) { console.error("No session found"); return }
+    tableData.user_id = session.user.id
+
     try {
-      const tableCount = tables.length
-      const row = Math.floor(tableCount / 5)
-      const col = tableCount % 5
-
-      const tableData = {
-        name: newTable.name || `Table ${tableCount + 1}`,
-        shape: newTable.shape,
-        capacity: newTable.capacity,
-        x: col * 280 + 50,
-        y: row * 220 + 50,
-        user_id: session.user.id,
-      }
-
-      const { data, error } = await supabase
-        .from("tables")
-        .insert([tableData])
-        .select()
-        .single()
+      const { data, error } = await supabase!
+        .from("tables").insert([tableData]).select().single()
 
       if (error) {
         console.error("Error adding table:", error.message)
@@ -297,59 +352,45 @@ function PlannerContent() {
     }
   }
 
+  const isDev = process.env.NODE_ENV === 'development' && !session
+
   const handleUpdateTable = async (id: string, updates: Partial<Table>) => {
-    const { error } = await supabase
-      .from("tables")
-      .update(updates)
-      .eq("id", id)
-
-    if (error) {
-      console.error("Error updating table:", error)
-      return
+    if (!isDev) {
+      const { error } = await supabase!.from("tables").update(updates).eq("id", id)
+      if (error) { console.error("Error updating table:", error); return }
     }
-
-    const newTables = tables.map((table) => (table.id === id ? { ...table, ...updates } : table))
+    const newTables = tables.map((t) => (t.id === id ? { ...t, ...updates } : t))
     setTables(newTables)
     saveState(newTables, guests)
   }
 
   const handleDeleteTable = async (id: string) => {
-    const { error } = await supabase.from("tables").delete().eq("id", id)
-
-    if (error) {
-      console.error("Error deleting table:", error)
-      return
+    if (!isDev) {
+      const { error } = await supabase!.from("tables").delete().eq("id", id)
+      if (error) { console.error("Error deleting table:", error); return }
     }
-
-    const newTables = tables.filter((table) => table.id !== id)
+    const newTables = tables.filter((t) => t.id !== id)
     setTables(newTables)
     saveState(newTables, guests)
   }
 
   const handleAddGuest = async (data: Partial<Guest>) => {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
-      console.error("No session found")
+    if (isDev) {
+      const newGuest = { id: crypto.randomUUID(), user_id: 'dev', ...data } as Guest
+      const newGuests = [...guests, newGuest]
+      setGuests(newGuests)
+      saveState(tables, newGuests)
       return
     }
 
+    const { data: { session: s } } = await supabase!.auth.getSession()
+    if (!s) { console.error("No session found"); return }
+
     try {
-      const { data: newGuest, error } = await supabase
-        .from("guests")
-        .insert([{ ...data, user_id: session.user.id }])
-        .select()
-        .single()
-
-      if (error) {
-        console.error("Error adding guest:", error.message)
-        return
-      }
-
-      if (!newGuest) {
-        console.error("No data returned after adding guest")
-        return
-      }
-
+      const { data: newGuest, error } = await supabase!
+        .from("guests").insert([{ ...data, user_id: s.user.id }]).select().single()
+      if (error) { console.error("Error adding guest:", error.message); return }
+      if (!newGuest) { console.error("No data returned after adding guest"); return }
       const newGuests = [...guests, newGuest]
       setGuests(newGuests)
       saveState(tables, newGuests)
@@ -359,43 +400,32 @@ function PlannerContent() {
   }
 
   const handleUpdateGuest = async (id: string, updates: Partial<Guest>) => {
-    try {
-      const { error } = await supabase
-        .from("guests")
-        .update(updates)
-        .eq("id", id)
-
-      if (error) {
-        console.error("Error updating guest:", error.message)
-        return
+    if (!isDev) {
+      try {
+        const { error } = await supabase!.from("guests").update(updates).eq("id", id)
+        if (error) { console.error("Error updating guest:", error.message); return }
+      } catch (error) {
+        console.error("Unexpected error updating guest:", error); return
       }
-
-      const newGuests = guests.map((guest) => 
-        guest.id === id ? { ...guest, ...updates } : guest
-      )
-      setGuests(newGuests)
-      saveState(tables, newGuests)
-    } catch (error) {
-      console.error("Unexpected error updating guest:", error)
     }
+    const newGuests = guests.map((g) => (g.id === id ? { ...g, ...updates } : g))
+    setGuests(newGuests)
+    saveState(tables, newGuests)
   }
 
   const handleDeleteGuest = async (id: string) => {
-    const { error } = await supabase.from("guests").delete().eq("id", id)
-
-    if (error) {
-      console.error("Error deleting guest:", error)
-      return
+    if (!isDev) {
+      const { error } = await supabase!.from("guests").delete().eq("id", id)
+      if (error) { console.error("Error deleting guest:", error); return }
     }
-
-    const newGuests = guests.filter((guest) => guest.id !== id)
+    const newGuests = guests.filter((g) => g.id !== id)
     setGuests(newGuests)
     saveState(tables, newGuests)
   }
 
   const handleZoom = (delta: number) => {
     setScale((prev) => {
-      const newScale = Math.max(0.5, Math.min(1.5, prev + delta))
+      const newScale = Math.max(0.1, Math.min(2.0, prev + delta))
       return newScale
     })
   }
@@ -417,7 +447,28 @@ function PlannerContent() {
     }
   }
 
+  const SNAP = 40
+
+  const snapToGrid = (v: number) => Math.round(v / SNAP) * SNAP
+
+  const handleTableDragStart = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    const table = tables.find(t => t.id === id)
+    if (!table) return
+    setDraggingTable({ id, startMouseX: e.clientX, startMouseY: e.clientY, origX: table.x, origY: table.y })
+  }
+
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (draggingTable) {
+      const dx = (e.clientX - draggingTable.startMouseX) / scale
+      const dy = (e.clientY - draggingTable.startMouseY) / scale
+      setTables(prev => prev.map(t =>
+        t.id === draggingTable.id
+          ? { ...t, x: snapToGrid(draggingTable.origX + dx), y: snapToGrid(draggingTable.origY + dy) }
+          : t
+      ))
+      return
+    }
     if (isDragging) {
       const newX = e.clientX - dragStart.x
       const newY = e.clientY - dragStart.y
@@ -426,6 +477,12 @@ function PlannerContent() {
   }
 
   const handleMouseUp = () => {
+    if (draggingTable) {
+      const table = tables.find(t => t.id === draggingTable.id)
+      if (table) handleUpdateTable(draggingTable.id, { x: snapToGrid(table.x), y: snapToGrid(table.y) })
+      setDraggingTable(null)
+      return
+    }
     if (isDragging) {
       setIsDragging(false)
     }
@@ -580,14 +637,15 @@ function PlannerContent() {
                 </DialogContent>
               </Dialog>
             </div>
-            <div 
+            <div
+              ref={canvasRef}
               className="w-full h-full overflow-hidden"
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
               onWheel={handleWheel}
-              style={{ cursor: isDragging ? 'grabbing' : 'default' }}
+              style={{ cursor: draggingTable ? 'grabbing' : isDragging ? 'grabbing' : 'default' }}
             >
               <div
                 style={{
@@ -603,12 +661,12 @@ function PlannerContent() {
                       linear-gradient(to right, #e5e7eb 1px, transparent 1px),
                       linear-gradient(to bottom, #e5e7eb 1px, transparent 1px)
                     `,
-                    backgroundSize: "280px 220px",
-                    backgroundPosition: "50px 50px",
-                    width: "10000px",
-                    height: "10000px",
-                    left: "-5000px",
-                    top: "-5000px",
+                    backgroundSize: "160px 160px",
+                    backgroundPosition: "0px 0px",
+                    width: "20000px",
+                    height: "20000px",
+                    left: "-10000px",
+                    top: "-10000px",
                   }}
                 />
                 {tables.map((table) => (
@@ -619,6 +677,7 @@ function PlannerContent() {
                     onUpdate={handleUpdateTable}
                     onDelete={handleDeleteTable}
                     onUpdateGuest={handleUpdateGuest}
+                    onDragStart={handleTableDragStart}
                   />
                 ))}
               </div>

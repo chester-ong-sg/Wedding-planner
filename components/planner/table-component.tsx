@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef } from "react"
-import { useDrag, useDrop } from "react-dnd"
+import { useDrop } from "react-dnd"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -15,6 +15,7 @@ interface TableComponentProps {
   onUpdate: (id: string, updates: Partial<Table>) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onUpdateGuest: (id: string, updates: Partial<Guest>) => Promise<void>
+  onDragStart: (id: string, e: React.MouseEvent) => void
 }
 
 type TableShape = "round" | "square" | "rectangular"
@@ -24,7 +25,7 @@ interface DragItem {
   id: string
 }
 
-export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGuest }: TableComponentProps) {
+export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGuest, onDragStart }: TableComponentProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [isViewingGuests, setIsViewingGuests] = useState(false)
   const [name, setName] = useState(table.name)
@@ -33,14 +34,6 @@ export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGues
 
   // Filter guests to only show those assigned to this table
   const tableGuests = guests.filter(guest => guest.table_id === table.id)
-
-  const [{ isDragging }, drag] = useDrag({
-    type: "table",
-    item: { type: "table", id: table.id },
-    collect: (monitor) => ({
-      isDragging: !!monitor.isDragging(),
-    }),
-  })
 
   const [{ isOver }, drop] = useDrop({
     accept: "guest",
@@ -68,46 +61,39 @@ export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGues
     setIsEditing(false)
   }
 
-  const getTableStyle = () => {
-    const baseStyle = {
-      position: "absolute" as const,
-      left: `${table.x}px`,
-      top: `${table.y}px`,
-      width: shape === "rectangular" ? "200px" : "150px",
-      height: shape === "rectangular" ? "100px" : "150px",
-      backgroundColor: isOver ? "#e5e7eb" : "#ffffff",
-      border: isOver ? "2px dashed #000" : "2px solid #000",
-      borderRadius: shape === "round" ? "50%" : "8px",
-      display: "flex",
-      flexDirection: "column" as const,
-      alignItems: "center",
-      justifyContent: "center",
-      cursor: isDragging ? "grabbing" : "move",
-      opacity: isDragging ? 0.5 : 1,
-      transition: "all 0.2s ease-out",
-      padding: "1rem",
-      pointerEvents: isDragging ? "none" as const : "auto" as const,
-      zIndex: isOver ? 1000 : 1,
-      userSelect: "none" as const,
-    }
+  const getTableStyle = () => ({
+    position: "absolute" as const,
+    left: `${table.x}px`,
+    top: `${table.y}px`,
+    width: shape === "rectangular" ? "200px" : "150px",
+    height: shape === "rectangular" ? "100px" : "150px",
+    backgroundColor: isOver ? "#e5e7eb" : "#ffffff",
+    border: isOver ? "2px dashed #000" : "2px solid #000",
+    borderRadius: shape === "round" ? "50%" : "8px",
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "move",
+    transition: "border 0.1s ease-out",
+    padding: "1rem",
+    zIndex: isOver ? 1000 : 1,
+    userSelect: "none" as const,
+  })
 
-    return baseStyle
-  }
-
-  // Create a ref that combines both drag and drop
   const ref = useRef<HTMLDivElement>(null)
-  drag(drop(ref))
+  drop(ref)
 
   return (
     <>
-      <div ref={ref} style={getTableStyle()}>
+      <div ref={ref} style={getTableStyle()} onMouseDown={(e) => onDragStart(table.id, e)} className="group">
         <div className="text-center">
           <div className="font-bold">{table.name}</div>
           <div className="text-sm text-gray-500">
             {tableGuests.length} / {table.capacity} guests
           </div>
         </div>
-        <div className="absolute top-2 right-2 flex space-x-1">
+        <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity" onMouseDown={(e) => e.stopPropagation()}>
           <Button
             variant="ghost"
             size="icon"
