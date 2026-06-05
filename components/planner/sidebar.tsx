@@ -69,7 +69,7 @@ export function Sidebar({ guests, tables, onAddGuest, onUpdateGuest, onDeleteGue
                     >
                       <div className="font-medium">{guest.name}</div>
                       <div className="text-sm text-gray-500">
-                        {guest.rsvp_status === "attending" ? "Attending" : "Not attending"}
+                        {guest.rsvp_status === "accepted" ? "Accepted" : guest.rsvp_status === "declined" ? "Declined" : "Pending"}
                       </div>
                     </div>
                   ))}
@@ -92,7 +92,7 @@ export function Sidebar({ guests, tables, onAddGuest, onUpdateGuest, onDeleteGue
                     >
                       <div className="font-medium">{guest.name}</div>
                       <div className="text-sm text-gray-500">
-                        {guest.rsvp_status === "attending" ? "Attending" : "Not attending"}
+                        {guest.rsvp_status === "accepted" ? "Accepted" : guest.rsvp_status === "declined" ? "Declined" : "Pending"}
                       </div>
                     </div>
                   ))}

@@ -1,6 +1,6 @@
 export type TableShape = "round" | "square" | "rectangular"
 
-export type RSVPStatus = "pending" | "attending" | "declined"
+export type RSVPStatus = "pending" | "accepted" | "declined"
 
 export interface Table {
   id: string

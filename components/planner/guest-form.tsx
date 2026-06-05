@@ -16,7 +16,7 @@ const guestSchema = z.object({
   email: z.string().email().optional().or(z.literal("")),
   contact: z.string().optional().or(z.literal("")),
   dietary_restrictions: z.string().optional().or(z.literal("")),
-  rsvp_status: z.enum(["pending", "attending", "declined"]),
+  rsvp_status: z.enum(["pending", "accepted", "declined"]),
   table_id: z.string().optional(),
 })
 
@@ -113,7 +113,7 @@ export function GuestForm({ open, onOpenChange, onSubmit, initialData, tables }:
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="attending">Attending</SelectItem>
+                <SelectItem value="accepted">Accepted</SelectItem>
                 <SelectItem value="declined">Declined</SelectItem>
               </SelectContent>
             </Select>

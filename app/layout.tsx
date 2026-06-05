@@ -27,7 +27,7 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
           <SupabaseProvider>
             {children}
-            <Toaster richColors position="top-center" />
+            <Toaster richColors position="bottom-center" offset="88px" />
           </SupabaseProvider>
         </ThemeProvider>
       </body>

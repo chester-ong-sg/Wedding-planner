@@ -19,7 +19,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
 import {
   Select,
@@ -173,7 +172,7 @@ function PlannerContent() {
     }
   }, [session, supabase])
 
-  const handleImport = async (importedGuests: { name: string; meal_preference?: string; rsvp_status?: string; table?: string }[]) => {
+  const handleImport = async (importedGuests: { name: string; email?: string; contact?: string; dietary_restrictions?: string; meal_preference?: string; rsvp_status?: string; table?: string }[]) => {
     // DEV ONLY: import into local state without Supabase
     if (process.env.NODE_ENV === 'development' && !session) {
       const GRID_SIZE = 200
@@ -201,8 +200,10 @@ function PlannerContent() {
       const newGuests = importedGuests.map(g => ({
         id: crypto.randomUUID(),
         name: g.name,
-        dietary_restrictions: g.meal_preference ?? null,
-        rsvp_status: g.rsvp_status ?? null,
+        email: g.email ?? null,
+        contact: g.contact ?? null,
+        dietary_restrictions: g.dietary_restrictions ?? g.meal_preference ?? null,
+        rsvp_status: (g.rsvp_status as 'pending' | 'accepted' | 'declined') ?? 'pending',
         table_id: g.table ? tableMap.get(g.table) ?? null : null,
         user_id: 'dev',
       }))
@@ -423,6 +424,28 @@ function PlannerContent() {
     saveState(tables, newGuests)
   }
 
+  const handleDeleteManyGuests = async (ids: string[]) => {
+    if (!isDev) {
+      const { error } = await supabase!.from("guests").delete().in("id", ids)
+      if (error) { console.error("Error bulk deleting guests:", error); return }
+    }
+    const newGuests = guests.filter((g) => !ids.includes(g.id))
+    setGuests(newGuests)
+    saveState(tables, newGuests)
+  }
+
+  const handleDeleteManyTables = async (ids: string[]) => {
+    if (!isDev) {
+      const { error } = await supabase!.from("tables").delete().in("id", ids)
+      if (error) { console.error("Error bulk deleting tables:", error); return }
+    }
+    const newTables = tables.filter((t) => !ids.includes(t.id))
+    const newGuests = guests.map((g) => ids.includes(g.table_id ?? "") ? { ...g, table_id: undefined } : g)
+    setTables(newTables)
+    setGuests(newGuests)
+    saveState(newTables, newGuests)
+  }
+
   const handleZoom = (delta: number) => {
     setScale((prev) => {
       const newScale = Math.max(0.1, Math.min(2.0, prev + delta))
@@ -430,16 +453,23 @@ function PlannerContent() {
     })
   }
 
-  const handleWheel = (e: React.WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault()
-      handleZoom(-e.deltaY * 0.001)
-    }
+  const handleWheel = (e: WheelEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    handleZoom(-e.deltaY * 0.001)
   }
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    canvas.addEventListener('wheel', handleWheel, { passive: false })
+    return () => canvas.removeEventListener('wheel', handleWheel)
+  })
 
   const [spacePressed, setSpacePressed] = useState(false)
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 1) e.preventDefault() // prevent browser auto-scroll on middle click
     // Enable panning with left click, middle mouse button, or when holding space
     if (e.button === 0 || e.button === 1 || (e.button === 0 && spacePressed)) {
       setIsDragging(true)
@@ -524,127 +554,75 @@ function PlannerContent() {
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div className="flex h-screen flex-col">
-        <div className="flex h-16 items-center border-b px-4">
-          <div className="flex items-center space-x-4">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setScale((prev) => Math.min(prev + 0.1, 1.5))}
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setScale((prev) => Math.max(prev - 0.1, 0.5))}
-            >
-              <Minus className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setScale(0.7)}
-            >
-              <Maximize2 className="h-4 w-4" />
-            </Button>
-            <div className="h-6 w-px bg-border" />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={undo}
-              disabled={!canUndo}
-            >
-              <Undo2 className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={redo}
-              disabled={!canRedo}
-            >
-              <Redo2 className="h-4 w-4" />
-            </Button>
-            <div className="h-6 w-px bg-border" />
-            <CsvImport onImport={handleImport} />
-            <ExportCSV guests={guests} tables={tables} />
-          </div>
-        </div>
-        <div className="flex h-screen overflow-hidden">
+      <div className="flex h-screen overflow-hidden">
           <Sidebar
             guests={guests}
             tables={tables}
             onAddGuest={handleAddGuest}
             onUpdateGuest={handleUpdateGuest}
             onDeleteGuest={handleDeleteGuest}
+            onDeleteManyGuests={handleDeleteManyGuests}
+            onDeleteManyTables={handleDeleteManyTables}
+            onAddTable={() => setIsAddTableOpen(true)}
           />
-          <div className="flex-1 relative">
-            <div className="absolute top-4 right-4 z-10 flex gap-2">
-              <Dialog open={isAddTableOpen} onOpenChange={setIsAddTableOpen}>
-                <DialogTrigger asChild>
-                  <Button className="bg-black hover:bg-gray-800">
-                    <Plus className="h-4 w-4 mr-2" />
+          <div className="flex-1 relative overflow-hidden">
+            <Dialog open={isAddTableOpen} onOpenChange={setIsAddTableOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Add New Table</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Table Name</Label>
+                    <Input
+                      id="name"
+                      value={newTable.name}
+                      onChange={(e) => setNewTable(prev => ({ ...prev, name: e.target.value }))}
+                      placeholder="Enter table name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="capacity">Number of Guests</Label>
+                    <Input
+                      id="capacity"
+                      type="number"
+                      min="1"
+                      max="20"
+                      value={newTable.capacity}
+                      onChange={(e) => setNewTable(prev => ({ ...prev, capacity: parseInt(e.target.value) || 8 }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="shape">Table Shape</Label>
+                    <Select
+                      value={newTable.shape}
+                      onValueChange={(value: "round" | "square" | "rectangular") =>
+                        setNewTable(prev => ({ ...prev, shape: value }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select shape" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="round">Round</SelectItem>
+                        <SelectItem value="square">Square</SelectItem>
+                        <SelectItem value="rectangular">Rectangular</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button onClick={handleAddTable} className="w-full">
                     Add Table
                   </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Add New Table</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="name">Table Name</Label>
-                      <Input
-                        id="name"
-                        value={newTable.name}
-                        onChange={(e) => setNewTable(prev => ({ ...prev, name: e.target.value }))}
-                        placeholder="Enter table name"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="capacity">Number of Guests</Label>
-                      <Input
-                        id="capacity"
-                        type="number"
-                        min="1"
-                        max="20"
-                        value={newTable.capacity}
-                        onChange={(e) => setNewTable(prev => ({ ...prev, capacity: parseInt(e.target.value) || 8 }))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="shape">Table Shape</Label>
-                      <Select
-                        value={newTable.shape}
-                        onValueChange={(value: "round" | "square" | "rectangular") => 
-                          setNewTable(prev => ({ ...prev, shape: value }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select shape" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="round">Round</SelectItem>
-                          <SelectItem value="square">Square</SelectItem>
-                          <SelectItem value="rectangular">Rectangular</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <Button onClick={handleAddTable} className="w-full">
-                      Add Table
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </div>
+                </div>
+              </DialogContent>
+            </Dialog>
             <div
               ref={canvasRef}
-              className="w-full h-full overflow-hidden"
+              className="w-full h-full"
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
-              onWheel={handleWheel}
               style={{ cursor: draggingTable ? 'grabbing' : isDragging ? 'grabbing' : 'default' }}
             >
               <div
@@ -682,9 +660,31 @@ function PlannerContent() {
                 ))}
               </div>
             </div>
+
+            {/* Figma-style floating toolbar — fixed centre bottom */}
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 bg-white border border-gray-200 rounded-xl shadow-lg px-2 py-1.5">
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => handleZoom(0.1)}>
+                <Plus className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => handleZoom(-0.1)}>
+                <Minus className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => { setScale(0.7); setPosition({ x: 0, y: 0 }) }}>
+                <Maximize2 className="h-4 w-4" />
+              </Button>
+              <div className="w-px h-5 bg-gray-200 mx-1" />
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={undo} disabled={!canUndo}>
+                <Undo2 className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={redo} disabled={!canRedo}>
+                <Redo2 className="h-4 w-4" />
+              </Button>
+              <div className="w-px h-5 bg-gray-200 mx-1" />
+              <CsvImport onImport={handleImport} />
+              <ExportCSV guests={guests} tables={tables} />
+            </div>
           </div>
         </div>
-      </div>
     </DndProvider>
   )
 }

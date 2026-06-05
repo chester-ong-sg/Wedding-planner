@@ -85,13 +85,13 @@ export function ExportCSV({ guests, tables }: ExportCSVProps) {
 
   return (
     <Button
-      variant="outline"
-      size="sm"
+      variant="ghost"
+      size="icon"
+      className="h-8 w-8 rounded-lg"
       onClick={handleExport}
-      className="flex items-center gap-2"
+      title="Export CSV"
     >
       <Download className="h-4 w-4" />
-      Export CSV
     </Button>
   )
 } 

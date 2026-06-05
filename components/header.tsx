@@ -31,7 +31,7 @@ export function Header() {
   }
 
   return (
-    <header className="px-4 lg:px-6 h-16 flex items-center border-b">
+    <header className="sticky top-0 z-50 px-4 lg:px-6 h-16 flex items-center border-b bg-background">
       <Link className="flex items-center justify-center" href="/">
         <CalendarHeart className="h-6 w-6 mr-2" />
         <span className="font-bold">Wedding Planner</span>

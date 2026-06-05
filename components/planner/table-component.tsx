@@ -1,13 +1,48 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { useDrop } from "react-dnd"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Trash2, Edit2, Users } from "lucide-react"
+import { toast } from "sonner"
 import type { Guest, Table } from "@/types/planner"
+
+type EditableField = "name" | "email" | "contact" | "dietary_restrictions" | "rsvp_status"
+type LocalGuest = Guest & { _dirty?: boolean }
+
+// Stable component — must live outside TableComponent to avoid remounting on every render
+function EditableCell({
+  value, isEditing, onChange, onBlur, onDoubleClick,
+}: {
+  value: string
+  isEditing: boolean
+  onChange: (v: string) => void
+  onBlur: () => void
+  onDoubleClick: () => void
+}) {
+  return isEditing ? (
+    <input
+      autoFocus
+      className="w-full bg-blue-50 border-b border-blue-400 outline-none px-1 py-0.5 text-sm"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
+    />
+  ) : (
+    <span
+      className="block cursor-default select-none"
+      onDoubleClick={onDoubleClick}
+      title="Double-click to edit"
+    >
+      {value || "—"}
+    </span>
+  )
+}
 
 interface TableComponentProps {
   table: Table
@@ -28,6 +63,42 @@ interface DragItem {
 export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGuest, onDragStart }: TableComponentProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [isViewingGuests, setIsViewingGuests] = useState(false)
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false)
+
+  // Inline editing state for guest list dialog
+  const [localGuests, setLocalGuests] = useState<LocalGuest[]>([])
+  const [editingCell, setEditingCell] = useState<{ guestId: string; field: EditableField } | null>(null)
+
+  // Sync local guests when dialog opens
+  useEffect(() => {
+    if (isViewingGuests) setLocalGuests(tableGuests.map(g => ({ ...g })))
+  }, [isViewingGuests])
+
+  const handleCellChange = (guestId: string, field: EditableField, value: string) => {
+    setLocalGuests(prev => prev.map(g => g.id === guestId ? { ...g, [field]: value, _dirty: true } : g))
+  }
+
+  const handleCellBlur = () => setEditingCell(null)
+
+  const handleDialogClose = async (open: boolean) => {
+    if (!open) {
+      const dirty = localGuests.filter(g => g._dirty)
+      for (const g of dirty) {
+        await onUpdateGuest(g.id, {
+          name: g.name,
+          email: g.email,
+          contact: g.contact,
+          dietary_restrictions: g.dietary_restrictions,
+          rsvp_status: g.rsvp_status,
+        })
+      }
+      if (dirty.length > 0) {
+        toast.success("Changes saved", { duration: 2000 })
+      }
+      setEditingCell(null)
+    }
+    setIsViewingGuests(open)
+  }
   const [name, setName] = useState(table.name)
   const [shape, setShape] = useState<TableShape>(table.shape)
   const [capacity, setCapacity] = useState(table.capacity)
@@ -86,40 +157,37 @@ export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGues
 
   return (
     <>
-      <div ref={ref} style={getTableStyle()} onMouseDown={(e) => onDragStart(table.id, e)} className="group">
-        <div className="text-center">
-          <div className="font-bold">{table.name}</div>
-          <div className="text-sm text-gray-500">
-            {tableGuests.length} / {table.capacity} guests
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div ref={ref} style={getTableStyle()} onMouseDown={(e) => onDragStart(table.id, e)} onDoubleClick={() => setIsViewingGuests(true)}>
+            <div className="text-center">
+              <div className="font-bold">{table.name}</div>
+              <div className="text-sm text-gray-500">
+                {tableGuests.length} / {table.capacity} guests
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity" onMouseDown={(e) => e.stopPropagation()}>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setIsViewingGuests(true)}
-            className="h-6 w-6"
-          >
+        </ContextMenuTrigger>
+        <ContextMenuContent onMouseDown={(e) => e.stopPropagation()}>
+          <ContextMenuItem onSelect={() => setIsViewingGuests(true)}>
             <Users className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setIsEditing(true)}
-            className="h-6 w-6"
-          >
+            Guest List
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onSelect={() => setIsEditing(true)}>
             <Edit2 className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => onDelete(table.id)}
-            className="h-6 w-6"
+            Edit
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            onSelect={() => setIsConfirmingDelete(true)}
+            className="text-red-500 hover:bg-red-50 focus:bg-red-50"
           >
             <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
+            Delete
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       <Dialog open={isEditing} onOpenChange={setIsEditing}>
         <DialogContent>
@@ -169,27 +237,98 @@ export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGues
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isViewingGuests} onOpenChange={setIsViewingGuests}>
-        <DialogContent>
+      <Dialog open={isViewingGuests} onOpenChange={handleDialogClose}>
+        <DialogContent className="max-w-5xl">
           <DialogHeader>
-            <DialogTitle>Guests at {table.name}</DialogTitle>
+            <DialogTitle>{table.name}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-2">
-            {tableGuests.map((guest) => (
-              <div
-                key={guest.id}
-                className="p-2 border rounded-lg hover:bg-gray-50 cursor-pointer"
-                onClick={() => onUpdateGuest(guest.id, { table_id: undefined })}
-              >
-                <div className="font-medium">{guest.name}</div>
-                <div className="text-sm text-gray-500">
-                  {guest.rsvp_status === "attending" ? "Attending" : "Not attending"}
-                </div>
-              </div>
-            ))}
+          <p className="text-xs text-gray-400 -mt-2">Double-click any cell to edit. Changes save when you close.</p>
+          <div className="overflow-auto max-h-[60vh]">
+            <table className="w-full text-sm table-fixed">
+              <colgroup>
+                <col className="w-[160px]" />
+                <col className="w-[200px]" />
+                <col className="w-[140px]" />
+                <col className="w-[180px]" />
+                <col className="w-[110px]" />
+              </colgroup>
+              <thead>
+                <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Contact</th>
+                  <th className="px-4 py-3">Dietary Restrictions</th>
+                  <th className="px-4 py-3">RSVP</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {localGuests.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-gray-400">No guests assigned to this table</td>
+                  </tr>
+                ) : (
+                  localGuests.map((guest) => {
+                    const isActive = (f: EditableField) => editingCell?.guestId === guest.id && editingCell.field === f
+                    return (
+                      <tr key={guest.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-medium text-gray-900">
+                          <EditableCell value={guest.name ?? ""} isEditing={isActive("name")} onChange={(v) => handleCellChange(guest.id, "name", v)} onBlur={handleCellBlur} onDoubleClick={() => setEditingCell({ guestId: guest.id, field: "name" })} />
+                        </td>
+                        <td className="px-4 py-3 text-gray-500">
+                          <EditableCell value={guest.email ?? ""} isEditing={isActive("email")} onChange={(v) => handleCellChange(guest.id, "email", v)} onBlur={handleCellBlur} onDoubleClick={() => setEditingCell({ guestId: guest.id, field: "email" })} />
+                        </td>
+                        <td className="px-4 py-3 text-gray-500">
+                          <EditableCell value={guest.contact ?? ""} isEditing={isActive("contact")} onChange={(v) => handleCellChange(guest.id, "contact", v)} onBlur={handleCellBlur} onDoubleClick={() => setEditingCell({ guestId: guest.id, field: "contact" })} />
+                        </td>
+                        <td className="px-4 py-3 text-gray-500">
+                          <EditableCell value={guest.dietary_restrictions ?? ""} isEditing={isActive("dietary_restrictions")} onChange={(v) => handleCellChange(guest.id, "dietary_restrictions", v)} onBlur={handleCellBlur} onDoubleClick={() => setEditingCell({ guestId: guest.id, field: "dietary_restrictions" })} />
+                        </td>
+                        <td className="px-4 py-3">
+                          {isActive("rsvp_status") ? (
+                            <select autoFocus className="w-full bg-blue-50 border-b border-blue-400 outline-none text-sm py-0.5" value={guest.rsvp_status} onChange={(e) => handleCellChange(guest.id, "rsvp_status", e.target.value)} onBlur={handleCellBlur}>
+                              <option value="pending">Pending</option>
+                              <option value="accepted">Accepted</option>
+                              <option value="declined">Declined</option>
+                            </select>
+                          ) : (
+                            <span
+                              className={`inline-flex cursor-default items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${guest.rsvp_status === "accepted" ? "bg-green-100 text-green-700" : guest.rsvp_status === "declined" ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-600"}`}
+                              onDoubleClick={() => setEditingCell({ guestId: guest.id, field: "rsvp_status" })}
+                              title="Double-click to edit"
+                            >
+                              {guest.rsvp_status === "accepted" ? "Accepted" : guest.rsvp_status === "declined" ? "Declined" : "Pending"}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={isConfirmingDelete} onOpenChange={setIsConfirmingDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete table?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove <span className="font-medium text-foreground">{table.name}</span> and unassign all {tableGuests.length} guest{tableGuests.length !== 1 ? "s" : ""} from it. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-500 hover:bg-red-600"
+              onClick={() => onDelete(table.id)}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }
