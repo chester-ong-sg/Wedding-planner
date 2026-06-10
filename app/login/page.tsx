@@ -41,11 +41,16 @@ export default function LoginPage() {
       }
 
       if (data?.session) {
-        toast({
-          title: "Success",
-          description: "Logged in successfully",
-        })
-        router.push("/planner")
+        toast({ title: "Success", description: "Logged in successfully" })
+        // Check onboarding status — new users go to /onboarding, existing to /dashboard
+        let dest = "/onboarding"
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: prof } = await (supabase as any).from("user_profiles")
+          .select("onboarding_completed")
+          .eq("id", data.session.user.id)
+          .single()
+        if (prof?.onboarding_completed) dest = "/dashboard"
+        router.push(dest)
       } else {
         toast({
           variant: "destructive",
@@ -107,13 +112,58 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Logging in..." : "Login"}
             </Button>
-            <Button 
-              variant="outline" 
-              className="w-full" 
-              onClick={() => {
-                setEmail("guest@gmail.com")
-                setPassword("123")
-                handleLogin(new Event("submit") as any)
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={async () => {
+                if (!supabase) return
+                setLoading(true)
+                try {
+                  let session = null
+
+                  // Try signing in first
+                  const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+                    email: "guest@gmail.com",
+                    password: "guest123",
+                  })
+
+                  if (signInError) {
+                    // Account doesn't exist — create it
+                    const { error: signUpError } = await supabase.auth.signUp({
+                      email: "guest@gmail.com",
+                      password: "guest123",
+                    })
+                    if (signUpError) {
+                      toast({ variant: "destructive", title: "Guest login failed", description: signUpError.message })
+                      return
+                    }
+                    // Sign in after creating
+                    const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+                      email: "guest@gmail.com",
+                      password: "guest123",
+                    })
+                    if (retryError) {
+                      toast({ variant: "destructive", title: "Guest login failed", description: retryError.message })
+                      return
+                    }
+                    session = retryData?.session
+                  } else {
+                    session = signInData?.session
+                  }
+
+                  if (session) {
+                    toast({ title: "Success", description: "Logged in as guest" })
+                    let dest = "/onboarding"
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const { data: prof } = await (supabase as any).from("user_profiles")
+                      .select("onboarding_completed").eq("id", session.user.id).single()
+                    if (prof?.onboarding_completed) dest = "/dashboard"
+                    router.push(dest)
+                  }
+                } finally {
+                  setLoading(false)
+                }
               }}
               disabled={loading}
             >

@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Plus, Undo2, Redo2, Minus, Maximize2 } from "lucide-react"
 import { AuthProvider } from "@/components/auth-provider"
 import type { Guest, Table } from "@/types/planner"
+import type { ViewMode } from "@/components/planner/sidebar-with-edit"
 import type { Session } from "@supabase/supabase-js"
 import {
   Dialog,
@@ -52,6 +53,7 @@ function PlannerContent() {
     id: string; startMouseX: number; startMouseY: number; origX: number; origY: number
   } | null>(null)
   const [isAddTableOpen, setIsAddTableOpen] = useState(false)
+  const [viewMode, setViewMode] = useState<ViewMode>("grid")
 
   // History management
   const [history, setHistory] = useState<State[]>([])
@@ -564,8 +566,11 @@ function PlannerContent() {
             onDeleteManyGuests={handleDeleteManyGuests}
             onDeleteManyTables={handleDeleteManyTables}
             onAddTable={() => setIsAddTableOpen(true)}
+            viewMode={viewMode}
+            onViewChange={setViewMode}
+            onImport={handleImport}
           />
-          <div className="flex-1 relative overflow-hidden">
+          <div className={`flex-1 relative overflow-hidden ${viewMode === "table" ? "hidden" : ""}`}>
             <Dialog open={isAddTableOpen} onOpenChange={setIsAddTableOpen}>
               <DialogContent>
                 <DialogHeader>
@@ -661,8 +666,8 @@ function PlannerContent() {
               </div>
             </div>
 
-            {/* Figma-style floating toolbar — fixed centre bottom */}
-            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 bg-white border border-gray-200 rounded-xl shadow-lg px-2 py-1.5">
+            {/* Figma-style floating toolbar — fixed centre bottom, hidden in table view */}
+            <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 bg-white border border-gray-200 rounded-xl shadow-lg px-2 py-1.5 ${viewMode === "table" ? "hidden" : ""}`}>
               <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => handleZoom(0.1)}>
                 <Plus className="h-4 w-4" />
               </Button>

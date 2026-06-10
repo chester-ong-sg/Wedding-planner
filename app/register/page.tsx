@@ -27,27 +27,26 @@ export default function RegisterPage() {
 
     try {
       // Special case for guest account
-      if (email === "guest@gmail.com" && password === "123") {
+      if (email === "guest@gmail.com" && password === "guest123") {
         // Check if guest account already exists
         const { data: existingUser, error: checkError } = await supabase.auth.signInWithPassword({
           email: "guest@gmail.com",
-          password: "123",
+          password: "guest123",
         })
 
         if (existingUser?.session) {
-          // Guest account exists, just log in
-          toast({
-            title: "Success",
-            description: "Logged in as guest successfully",
-          })
-          router.push("/planner")
+          toast({ title: "Success", description: "Logged in as guest successfully" })
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: prof } = await (supabase as any).from("user_profiles")
+            .select("onboarding_completed").eq("id", existingUser.session.user.id).single()
+          router.push(prof?.onboarding_completed ? "/dashboard" : "/onboarding")
           return
         }
 
         // Create guest account without email verification
         const { error: signUpError, data } = await supabase.auth.signUp({
           email: "guest@gmail.com",
-          password: "123",
+          password: "guest123",
           options: {
             emailRedirectTo: `${window.location.origin}/auth/callback`,
             data: {
@@ -68,7 +67,7 @@ export default function RegisterPage() {
         // Automatically sign in the guest
         const { error: signInError, data: signInData } = await supabase.auth.signInWithPassword({
           email: "guest@gmail.com",
-          password: "123",
+          password: "guest123",
         })
 
         if (signInError) {
@@ -81,11 +80,8 @@ export default function RegisterPage() {
         }
 
         if (signInData?.session) {
-          toast({
-            title: "Guest account created",
-            description: "You have been automatically logged in as guest.",
-          })
-          router.push("/planner")
+          toast({ title: "Guest account created", description: "You have been automatically logged in as guest." })
+          router.push("/onboarding")
           return
         }
       }
@@ -134,11 +130,8 @@ export default function RegisterPage() {
       }
 
       if (signInData?.session) {
-        toast({
-          title: "Registration successful",
-          description: "You have been automatically logged in.",
-        })
-        router.push("/planner")
+        toast({ title: "Registration successful", description: "You have been automatically logged in." })
+        router.push("/onboarding")
       } else {
         toast({
           variant: "destructive",
