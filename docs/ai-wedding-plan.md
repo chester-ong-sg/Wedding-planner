@@ -9,7 +9,7 @@ How the onboarding flow turns three answers into a personalised, editable Singap
 ```
 ┌─────────────┐   POST    ┌──────────────────────┐   Messages API   ┌──────────────┐
 │ /onboarding │ ────────▶ │ /api/generate-plan   │ ───────────────▶ │  Anthropic   │
-│  (3 Qs)     │           │  (server route)      │  claude-sonnet-4-6│   API        │
+│  (3 Qs)     │           │  (server route)      │  claude-haiku-4-5│   API        │
 └─────────────┘           └──────────────────────┘                  └──────────────┘
        │                            │                                       │
        │                            │  GeneratedPlan JSON (validated)       │
@@ -55,8 +55,9 @@ Server-only POST handler. The Anthropic key never reaches the client.
 
 | Concern | Behaviour |
 |---|---|
-| Model | `claude-sonnet-4-6` |
-| `max_tokens` | `8000` — enough for a bounded plan; the route returns a 500 if `stop_reason === "max_tokens"` rather than parsing truncated JSON |
+| Model | `claude-haiku-4-5` ($1/M in, $5/M out — 3× cheaper than Sonnet) |
+| `max_tokens` | `5000` — real output is ~2,400 tokens; the cap stops a runaway response from over-billing. Returns 500 if `stop_reason === "max_tokens"` rather than parsing truncated JSON |
+| Usage logging | Every call logs `in` / `out` / `cache_read` tokens and an estimated cost |
 | No API key | Returns a built-in `MOCK_PLAN` so the UI works offline |
 | JSON parsing | Strips markdown fences, then slices from the first `{` to the last `}` before `JSON.parse` |
 
@@ -68,9 +69,13 @@ The prompt injects a **real Singapore wedding reference** (`REAL_REFERENCE`) der
 - The real day-of timeline (gate-crash → prayers/tangyuan → tea ceremony → cocktail → march-ins → games → stage photos → after-party).
 - Seating reality (10 pax/table, VIP table, family-branch clustering) and "things couples forget" (angpao box + collector, parking coupons, AV laptops, etc.).
 
-Rules tell the model to **scale the ballroom line with guest count** while keeping fixed vendor fees flat, and to **respect the wedding type** (ROM-only skips banquet logistics, etc.). Output is **bounded** (5–6 checklist sections × 3–5 tasks, 5–6 budget categories × 3–5 items, 4–6 milestones) to keep generation fast (~60–75s) and focused.
+Rules tell the model to **scale the ballroom line with guest count** while keeping fixed vendor fees flat, and to **respect the wedding type** (ROM-only skips banquet logistics, etc.). Output is **bounded and terse** (5 checklist sections × 3–4 tasks, 5 budget categories × 3–4 items, 4–5 milestones, notes used sparingly) to keep generation fast (~40s) and cheap.
 
-> Customers should set a spend limit in the Anthropic console. Each onboarding costs roughly $0.01–$0.02.
+### Cost
+
+Measured per onboarding on `claude-haiku-4-5`: ~1,400 input + ~2,400 output tokens ≈ **$0.014**. Output is ~95% of the cost (output tokens are 5× input), so the size limits and "keep all text terse" rules in the prompt are the main cost lever — not the input/reference size. Set a spend limit in the Anthropic console regardless.
+
+> Earlier debugging runs used `claude-sonnet-4-6` with `max_tokens` as high as 16000; a few of those long/truncated responses each billed ~$0.20–0.24, which is what drove early spend. Switching to Haiku, capping `max_tokens` at 5000, and trimming output brought steady-state cost back to ~1.4 cents/call.
 
 ---
 

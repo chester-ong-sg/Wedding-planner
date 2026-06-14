@@ -83,7 +83,7 @@ A web application for planning a Singapore wedding end to end. Answer three ques
 | Framework | Next.js 15 (App Router) |
 | Language | TypeScript |
 | Styling | Tailwind CSS + Shadcn UI |
-| AI | Anthropic API (`@anthropic-ai/sdk`, `claude-sonnet-4-6`) via a server-side route |
+| AI | Anthropic API (`@anthropic-ai/sdk`, `claude-haiku-4-5`) via a server-side route |
 | Drag & Drop | React DnD (guests) + custom mouse events (tables) |
 | Database & Auth | Supabase (PostgreSQL + Auth, RLS) |
 | Deployment | GitHub Pages via GitHub Actions |
@@ -140,7 +140,7 @@ Open [http://localhost:3000](http://localhost:3000).
 ## How the AI Plan Generation Works
 
 ```
-/onboarding  ──POST──▶  /api/generate-plan  ──▶  Anthropic API (claude-sonnet-4-6)
+/onboarding  ──POST──▶  /api/generate-plan  ──▶  Anthropic API (claude-haiku-4-5)
    (3 Qs)                  (server route,            │
                             holds API key)           ▼
                                               GeneratedPlan JSON
@@ -152,8 +152,9 @@ Open [http://localhost:3000](http://localhost:3000).
                                                /dashboard
 ```
 
-- The prompt is bounded (5–6 checklist sections, 5–6 budget categories, 4–6 milestones) and anchored to a real Singapore wedding reference so estimates scale sensibly with guest count. Generation takes ~60–75s.
-- `max_tokens` is capped and the route rejects truncated responses rather than returning broken JSON.
+- The prompt is bounded (5 checklist sections, 5 budget categories, 4–5 milestones, terse text) and anchored to a real Singapore wedding reference so estimates scale sensibly with guest count. Generation takes ~40s.
+- `max_tokens` is capped at 5000 and the route rejects truncated responses rather than returning broken JSON. Token usage is logged per call.
+- **Cost:** ~1.4 cents per onboarding on `claude-haiku-4-5` (~1,400 input + ~2,400 output tokens). Output tokens dominate, so the prompt keeps generated text terse. Set a spend limit in the Anthropic console.
 - See `app/api/generate-plan/route.ts` for the prompt and reference data, and `docs/ai-wedding-plan.md` for the full subsystem write-up.
 
 ---

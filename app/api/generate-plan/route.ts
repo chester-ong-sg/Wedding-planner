@@ -197,10 +197,11 @@ Rules:
 - Tone: warm, local, personal — not generic Western wedding advice — like a friend who just got married in Singapore sharing exactly what they did
 - Include Singapore-specific vendors/venues and the practical day-of items couples forget
 
-SIZE LIMITS (keep it focused and fast — do NOT pad):
-- Checklist: 5–6 time-grouped sections (e.g. "12 months before" down to "Wedding week"), each with 3–5 tasks. Task titles short; add "notes" only when it genuinely helps.
-- Budget: 5–6 categories, each with 3–5 line items.
-- Milestones: 4–6 key dated milestones.
+SIZE LIMITS — keep the plan tight to control cost; do NOT pad:
+- Checklist: exactly 5 time-grouped sections (e.g. "12 months before" down to "Wedding week"), 3–4 tasks each.
+- Budget: exactly 5 categories, 3–4 line items each.
+- Milestones: 4–5 key dated milestones.
+- Keep ALL text terse: task and milestone titles under ~10 words; milestone descriptions one short sentence. Use "notes" sparingly — mainly to justify a budget figure — and keep them under ~12 words. Most checklist items need no notes at all.
 
 Return ONLY valid JSON matching this exact schema (no markdown, no commentary):
 {
@@ -226,10 +227,23 @@ Return ONLY valid JSON matching this exact schema (no markdown, no commentary):
 }`
 
     const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 8000,
+      // Haiku 4.5 ($1/$5 per M tok) — 3x cheaper than Sonnet ($3/$15). The plan
+      // is heavily grounded by REAL_REFERENCE, so the model isn't doing much
+      // free-form reasoning; Haiku handles the structured fill well.
+      model: "claude-haiku-4-5",
+      // Real output is ~3000 tokens; cap a little above so a runaway response
+      // can never bill more than this (output is the dominant cost).
+      max_tokens: 5000,
       messages: [{ role: "user", content: prompt }],
     })
+
+    // Log token usage so per-call cost stays observable.
+    const u = message.usage
+    const cost = (u.input_tokens / 1e6) * 1 + (u.output_tokens / 1e6) * 5
+    console.log(
+      `generate-plan usage: in=${u.input_tokens} out=${u.output_tokens} ` +
+        `cache_read=${u.cache_read_input_tokens ?? 0} ≈ $${cost.toFixed(4)}`
+    )
 
     if (message.stop_reason === "max_tokens") {
       console.error("generate-plan: response hit max_tokens — output truncated")
