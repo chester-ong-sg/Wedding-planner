@@ -21,6 +21,10 @@ const config: Config = {
     },
   	extend: {
   		colors: {
+  			/* Brand tokens — used directly in components */
+  			'brand-rose': 'var(--brand-rose)',
+  			'brand-rose-muted': 'var(--brand-rose-muted)',
+  			'brand-gold-muted': 'var(--brand-gold-muted)',
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
   			card: {

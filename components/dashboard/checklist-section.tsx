@@ -58,7 +58,7 @@ export function ChecklistSection({ items, onToggle, onUpdate }: Props) {
       {/* Progress bar */}
       <div className="h-1.5 bg-gray-100 rounded-full mb-6 overflow-hidden">
         <div
-          className="h-full bg-rose-400 rounded-full transition-all duration-500"
+          className="h-full bg-brand-rose rounded-full transition-all duration-500"
           style={{ width: items.length ? `${(completedCount / items.length) * 100}%` : "0%" }}
         />
       </div>

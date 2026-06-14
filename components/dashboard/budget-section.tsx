@@ -95,12 +95,12 @@ export function BudgetSection({ items, onUpdate }: Props) {
 
       <div className="border rounded-xl overflow-hidden">
         <table className="w-full text-sm border-collapse">
-          <thead className="bg-gray-50 border-b">
+          <thead className="bg-secondary border-b">
             <tr>
-              <th className="px-3 py-2.5 text-left font-medium text-gray-600">Item</th>
-              <th className="px-3 py-2.5 text-right font-medium text-gray-600 w-32">Estimated (SGD)</th>
-              <th className="px-3 py-2.5 text-right font-medium text-gray-600 w-32">Actual (SGD)</th>
-              <th className="px-3 py-2.5 text-left font-medium text-gray-600 w-48">Notes</th>
+              <th className="px-3 py-2.5 text-left font-medium text-muted-foreground">Item</th>
+              <th className="px-3 py-2.5 text-right font-medium text-muted-foreground w-32">Estimated (SGD)</th>
+              <th className="px-3 py-2.5 text-right font-medium text-muted-foreground w-32">Actual (SGD)</th>
+              <th className="px-3 py-2.5 text-left font-medium text-muted-foreground w-48">Notes</th>
             </tr>
           </thead>
           <tbody>
@@ -109,16 +109,16 @@ export function BudgetSection({ items, onUpdate }: Props) {
               const catActual = groupItems.reduce((s, i) => s + (i.actual_amount ?? 0), 0)
               return (
                 <>
-                  <tr key={`${category}-header`} className="bg-gray-50/50 border-t border-b border-gray-100">
+                  <tr key={`${category}-header`} className="bg-secondary/50 border-t border-b border-border">
                     <td colSpan={4} className="px-3 py-1.5">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{category}</span>
-                        <span className="text-xs text-gray-400">{fmt(catEstimated)}{catActual > 0 ? ` / ${fmt(catActual)}` : ""}</span>
+                        <span className="text-xs font-semibold text-primary/70 uppercase tracking-wide">{category}</span>
+                        <span className="text-xs text-muted-foreground">{fmt(catEstimated)}{catActual > 0 ? ` / ${fmt(catActual)}` : ""}</span>
                       </div>
                     </td>
                   </tr>
                   {groupItems.sort((a, b) => a.sort_order - b.sort_order).map(item => (
-                    <tr key={item.id} className="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">
+                    <tr key={item.id} className="border-b border-border hover:bg-secondary/40 transition-colors">
                       <EditableCell item={item} field="item_name" display={item.item_name} />
                       <EditableCell
                         item={item} field="estimated_amount"
@@ -130,16 +130,16 @@ export function BudgetSection({ items, onUpdate }: Props) {
                         display={item.actual_amount != null ? fmt(item.actual_amount) : ""}
                         numeric className="text-right tabular-nums"
                       />
-                      <EditableCell item={item} field="notes" display={item.notes ?? ""} className="text-xs text-gray-400" />
+                      <EditableCell item={item} field="notes" display={item.notes ?? ""} className="text-xs text-muted-foreground/70" />
                     </tr>
                   ))}
                 </>
               )
             })}
-            <tr className="bg-gray-50 border-t-2 font-semibold">
+            <tr className="bg-secondary border-t-2 border-border font-semibold">
               <td className="px-3 py-2.5">Total</td>
               <td className="px-3 py-2.5 text-right tabular-nums">{fmt(totalEstimated)}</td>
-              <td className={cn("px-3 py-2.5 text-right tabular-nums", totalActual > totalEstimated ? "text-red-500" : totalActual > 0 ? "text-green-600" : "")}>
+              <td className={cn("px-3 py-2.5 text-right tabular-nums", totalActual > totalEstimated ? "text-destructive" : totalActual > 0 ? "text-green-600" : "")}>
                 {totalActual > 0 ? fmt(totalActual) : "—"}
               </td>
               <td />
@@ -147,7 +147,7 @@ export function BudgetSection({ items, onUpdate }: Props) {
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-gray-400 mt-2">Click any cell to edit. Actual column tracks real spend as vendors are confirmed.</p>
+      <p className="text-xs text-muted-foreground/60 mt-2">Click any cell to edit. Actual column tracks real spend as vendors are confirmed.</p>
     </section>
   )
 }

@@ -52,13 +52,13 @@ export function MilestonesSection({ milestones, onToggle, onUpdate }: Props) {
               key={m.id}
               className={cn(
                 "flex items-start gap-3 p-4 rounded-xl border transition-colors",
-                m.is_completed ? "bg-gray-50 border-gray-200 opacity-60" : "bg-white border-gray-200"
+                m.is_completed ? "bg-secondary border-border opacity-60" : "bg-card border-border"
               )}
             >
               <button className="mt-0.5 shrink-0" onClick={() => onToggle(m.id, !m.is_completed)}>
                 {m.is_completed
                   ? <CheckCircle2 className="h-5 w-5 text-green-500" />
-                  : <Circle className="h-5 w-5 text-gray-300 hover:text-gray-500" />
+                  : <Circle className="h-5 w-5 text-border hover:text-muted-foreground" />
                 }
               </button>
               <div className="flex-1 min-w-0">
@@ -88,7 +88,7 @@ export function MilestonesSection({ milestones, onToggle, onUpdate }: Props) {
                 {m.due_date && (
                   <>
                     <div className="text-xs text-gray-500">{formatDate(m.due_date)}</div>
-                    <div className={cn("text-xs font-medium mt-0.5", isOverdue ? "text-red-500" : "text-rose-400")}>
+                    <div className={cn("text-xs font-medium mt-0.5", isOverdue ? "text-destructive" : "text-brand-rose")}>
                       {days}
                     </div>
                   </>
