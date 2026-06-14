@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
-    domains: ['localhost', 'cxneyijdklpnzbttnzdz.supabase.co'],
+    domains: ['localhost', 'nmdikxksmjfblmroqmbe.supabase.co'],
   },
   eslint: {
     ignoreDuringBuilds: true,
@@ -9,9 +9,6 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  experimental: {
-    optimizeCss: false,
-  }
 }
 
 export default nextConfig
