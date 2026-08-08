@@ -25,7 +25,13 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { Plus, Search, Pencil, Trash, LayoutGrid, Table as TableIcon, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react"
+import { Search, Pencil, Trash, LayoutGrid, List, UserRound, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react"
+
+const TableRestaurantIcon = ({ className }: { className?: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <path d="m21.96 9.73-1.43-5c-.12-.43-.51-.73-.96-.73H4.43c-.45 0-.84.3-.96.73l-1.43 5c-.18.63.3 1.27.96 1.27h2.2L4 20h2l.67-5h10.67l.66 5h2l-1.2-9H21c.66 0 1.14-.64.96-1.27zM6.93 13l.27-2h9.6l.27 2H6.93zm-2.6-4 .86-3h13.63l.86 3H4.33z" />
+  </svg>
+)
 import { CsvImport } from "@/components/planner/csv-import"
 import { ExportCSV } from "@/components/planner/export-csv"
 import type { Guest, Table, RSVPStatus } from "@/types/planner"
@@ -53,6 +59,60 @@ interface DragItem {
   type: "guest"
   id: string
   tableId: string | null
+}
+
+function TableDropZone({
+  tableId,
+  onUpdateGuest,
+  children,
+}: {
+  tableId: string
+  onUpdateGuest: (id: string, updates: Partial<Guest>) => Promise<void>
+  children: React.ReactNode
+}) {
+  const [{ isOver }, drop] = useDrop<DragItem, void, { isOver: boolean }>({
+    accept: "guest",
+    drop: (item, monitor) => {
+      if (monitor.didDrop()) return
+      if (item.type === "guest" && item.tableId !== tableId) {
+        onUpdateGuest(item.id, { table_id: tableId })
+      }
+    },
+    canDrop: (item) => item.type === "guest" && item.tableId !== tableId,
+    collect: (monitor) => ({ isOver: !!monitor.isOver() && monitor.canDrop() }),
+  }, [tableId, onUpdateGuest])
+
+  return (
+    <div ref={drop} className={isOver ? "rounded-md ring-2 ring-primary/40" : ""}>
+      {children}
+    </div>
+  )
+}
+
+function UnassignedDropZone({
+  onUpdateGuest,
+  children,
+}: {
+  onUpdateGuest: (id: string, updates: Partial<Guest>) => Promise<void>
+  children: React.ReactNode
+}) {
+  const [{ isOver }, drop] = useDrop<DragItem, void, { isOver: boolean }>({
+    accept: "guest",
+    drop: (item, monitor) => {
+      if (monitor.didDrop()) return
+      if (item.type === "guest" && item.tableId !== "unassigned") {
+        onUpdateGuest(item.id, { table_id: undefined })
+      }
+    },
+    canDrop: (item) => item.type === "guest" && item.tableId !== "unassigned" && item.tableId !== null,
+    collect: (monitor) => ({ isOver: !!monitor.isOver() && monitor.canDrop() }),
+  }, [onUpdateGuest])
+
+  return (
+    <div ref={drop} className={isOver ? "rounded-md ring-2 ring-primary/40" : ""}>
+      {children}
+    </div>
+  )
 }
 
 export function Sidebar({ guests, tables, onAddGuest, onUpdateGuest, onDeleteGuest, onDeleteManyGuests, onDeleteManyTables, onAddTable, viewMode, onViewChange, onImport }: SidebarProps) {
@@ -122,15 +182,16 @@ export function Sidebar({ guests, tables, onAddGuest, onUpdateGuest, onDeleteGue
     return list.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()))
   }
 
-  const [{ isOver }, drop] = useDrop<DragItem, void, { isOver: boolean }>(() => ({
+  const [{ isOver }, drop] = useDrop<DragItem, void, { isOver: boolean }>({
     accept: "guest",
-    drop: (item) => {
+    drop: (item, monitor) => {
+      if (monitor.didDrop()) return
       if (item.type === "guest") {
-        onUpdateGuest(item.id, { table_id: item.tableId === "unassigned" ? undefined : item.tableId ?? undefined })
+        onUpdateGuest(item.id, { table_id: undefined })
       }
     },
     collect: (monitor) => ({ isOver: !!monitor.isOver() }),
-  }))
+  }, [onUpdateGuest])
 
   const toggleGuest = (id: string) => {
     setSelectedGuestIds(prev => {
@@ -250,16 +311,7 @@ export function Sidebar({ guests, tables, onAddGuest, onUpdateGuest, onDeleteGue
       {/* Header */}
       <div className="p-4 border-b">
         <div className="flex items-center gap-2 mb-3">
-          <Input
-            placeholder="Search guests..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="flex-1"
-          />
-          <Button variant="outline" size="icon">
-            <Search className="h-4 w-4" />
-          </Button>
-          {/* View toggle */}
+          {/* View toggle — leftmost so it stays stable as view changes */}
           <div className="flex border rounded-lg overflow-hidden shrink-0">
             <button
               onClick={() => onViewChange("grid")}
@@ -271,19 +323,29 @@ export function Sidebar({ guests, tables, onAddGuest, onUpdateGuest, onDeleteGue
             <button
               onClick={() => onViewChange("table")}
               className={`px-2.5 py-2 transition-colors border-l ${viewMode === "table" ? "bg-black text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}
-              title="Table view"
+              title="List view"
             >
-              <TableIcon className="h-4 w-4" />
+              <List className="h-4 w-4" />
             </button>
+          </div>
+          {/* Search bar with icon inside */}
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+            <Input
+              placeholder="Search guests..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8"
+            />
           </div>
         </div>
         <div className="flex gap-2">
           <Button className="flex-1" onClick={() => setIsAddGuestOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
+            <UserRound className="h-4 w-4 mr-2" />
             Add Guest
           </Button>
           <Button className="flex-1" variant="outline" onClick={onAddTable}>
-            <Plus className="h-4 w-4 mr-2" />
+            <TableRestaurantIcon className="h-4 w-4 mr-2" />
             Add Table
           </Button>
           {viewMode === "table" && (
@@ -339,39 +401,66 @@ export function Sidebar({ guests, tables, onAddGuest, onUpdateGuest, onDeleteGue
         <div className="flex-1 overflow-auto p-4">
           <Accordion type="multiple" className="w-full">
             {tables.map((table) => (
-              <AccordionItem key={table.id} value={table.id}>
-                <div className="relative flex items-center">
-                  <Checkbox
-                    checked={selectedTableIds.has(table.id)}
-                    onCheckedChange={() => toggleTable(table.id)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 z-10"
-                  />
-                  <AccordionTrigger className="text-sm w-full pl-6">
-                    {table.name} ({guestsByTable[table.id]?.length || 0} guests)
-                  </AccordionTrigger>
-                </div>
-                <AccordionContent>
-                  <div className="space-y-2 pl-6">
-                    {filteredGuests(table.id).map((guest) => (
-                      <GuestItem key={guest.id} guest={guest} tableId={table.id} />
-                    ))}
+              <TableDropZone key={table.id} tableId={table.id} onUpdateGuest={onUpdateGuest}>
+                <AccordionItem value={table.id}>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={selectedTableIds.has(table.id)}
+                      onCheckedChange={() => toggleTable(table.id)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <AccordionTrigger className="text-sm w-full">
+                        {table.name} ({guestsByTable[table.id]?.length || 0} guests)
+                      </AccordionTrigger>
+                    </div>
                   </div>
-                </AccordionContent>
-              </AccordionItem>
+                  <AccordionContent>
+                    <div className="space-y-2 pl-6">
+                      {filteredGuests(table.id).map((guest) => (
+                        <GuestItem key={guest.id} guest={guest} tableId={table.id} />
+                      ))}
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </TableDropZone>
             ))}
-            <AccordionItem value="unassigned">
-              <AccordionTrigger className="text-sm">
-                Unassigned ({guestsByTable["unassigned"]?.length || 0} guests)
-              </AccordionTrigger>
-              <AccordionContent>
-                <div className="space-y-2">
-                  {filteredGuests("unassigned").map((guest) => (
-                    <GuestItem key={guest.id} guest={guest} tableId="unassigned" />
-                  ))}
-                </div>
-              </AccordionContent>
-            </AccordionItem>
+            {(() => {
+              const unassigned = guestsByTable["unassigned"] ?? []
+              const allUnassignedSelected = unassigned.length > 0 && unassigned.every(g => selectedGuestIds.has(g.id))
+              return (
+                <UnassignedDropZone onUpdateGuest={onUpdateGuest}>
+                  <AccordionItem value="unassigned">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        checked={allUnassignedSelected}
+                        disabled={unassigned.length === 0}
+                        onCheckedChange={(checked) => {
+                          setSelectedGuestIds(prev => {
+                            const next = new Set(prev)
+                            unassigned.forEach(g => checked ? next.add(g.id) : next.delete(g.id))
+                            return next
+                          })
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <AccordionTrigger className="text-sm w-full">
+                          Unassigned ({unassigned.length} guests)
+                        </AccordionTrigger>
+                      </div>
+                    </div>
+                    <AccordionContent>
+                      <div className="space-y-2 pl-6">
+                        {filteredGuests("unassigned").map((guest) => (
+                          <GuestItem key={guest.id} guest={guest} tableId="unassigned" />
+                        ))}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                </UnassignedDropZone>
+              )
+            })()}
           </Accordion>
         </div>
       ) : (

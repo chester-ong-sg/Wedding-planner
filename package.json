@@ -2,6 +2,9 @@
   "name": "wedding-planner",
   "version": "0.4.0",
   "private": true,
+  "pnpm": {
+    "onlyBuiltDependencies": ["sharp"]
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

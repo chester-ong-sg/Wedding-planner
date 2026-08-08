@@ -4,7 +4,6 @@ import { useState, useRef, useEffect } from "react"
 import { useDrop } from "react-dnd"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -47,10 +46,12 @@ function EditableCell({
 interface TableComponentProps {
   table: Table
   guests: Guest[]
+  isSelected?: boolean
   onUpdate: (id: string, updates: Partial<Table>) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onUpdateGuest: (id: string, updates: Partial<Guest>) => Promise<void>
   onDragStart: (id: string, e: React.MouseEvent) => void
+  onRequestDelete: (id: string) => void
 }
 
 type TableShape = "round" | "square" | "rectangular"
@@ -60,10 +61,10 @@ interface DragItem {
   id: string
 }
 
-export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGuest, onDragStart }: TableComponentProps) {
+export function TableComponent({ table, guests, isSelected = false, onUpdate, onDelete, onUpdateGuest, onDragStart, onRequestDelete }: TableComponentProps) {
   const [isEditing, setIsEditing] = useState(false)
+  const [isHovered, setIsHovered] = useState(false)
   const [isViewingGuests, setIsViewingGuests] = useState(false)
-  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false)
 
   // Inline editing state for guest list dialog
   const [localGuests, setLocalGuests] = useState<LocalGuest[]>([])
@@ -138,17 +139,21 @@ export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGues
     top: `${table.y}px`,
     width: shape === "rectangular" ? "200px" : "150px",
     height: shape === "rectangular" ? "100px" : "150px",
-    backgroundColor: isOver ? "#e5e7eb" : "#ffffff",
-    border: isOver ? "2px dashed #000" : "2px solid #000",
+    backgroundColor: isOver ? "#e5e7eb" : isHovered ? "#f3f4f6" : "#ffffff",
+    border: isSelected
+      ? "2px solid hsl(var(--primary))"
+      : isOver
+      ? "2px dashed #000"
+      : "2px solid #000",
     borderRadius: shape === "round" ? "50%" : "8px",
     display: "flex",
     flexDirection: "column" as const,
     alignItems: "center",
     justifyContent: "center",
     cursor: "move",
-    transition: "border 0.1s ease-out",
+    transition: "background-color 0.15s ease, border-color 0.15s ease",
     padding: "1rem",
-    zIndex: isOver ? 1000 : 1,
+    zIndex: isSelected || isOver ? 1000 : 1,
     userSelect: "none" as const,
   })
 
@@ -159,7 +164,7 @@ export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGues
     <>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div ref={ref} style={getTableStyle()} onMouseDown={(e) => onDragStart(table.id, e)} onDoubleClick={() => setIsViewingGuests(true)}>
+          <div ref={ref} style={getTableStyle()} onMouseDown={(e) => onDragStart(table.id, e)} onDoubleClick={() => setIsViewingGuests(true)} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
             <div className="text-center">
               <div className="font-bold">{table.name}</div>
               <div className="text-sm text-gray-500">
@@ -180,7 +185,7 @@ export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGues
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem
-            onSelect={() => setIsConfirmingDelete(true)}
+            onSelect={() => onRequestDelete(table.id)}
             className="text-red-500 hover:bg-red-50 focus:bg-red-50"
           >
             <Trash2 className="h-4 w-4" />
@@ -310,25 +315,6 @@ export function TableComponent({ table, guests, onUpdate, onDelete, onUpdateGues
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={isConfirmingDelete} onOpenChange={setIsConfirmingDelete}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete table?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently remove <span className="font-medium text-foreground">{table.name}</span> and unassign all {tableGuests.length} guest{tableGuests.length !== 1 ? "s" : ""} from it. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-500 hover:bg-red-600"
-              onClick={() => onDelete(table.id)}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   )
 }

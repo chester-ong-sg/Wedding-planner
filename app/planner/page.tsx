@@ -22,6 +22,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -52,50 +62,52 @@ function PlannerContent() {
   const [draggingTable, setDraggingTable] = useState<{
     id: string; startMouseX: number; startMouseY: number; origX: number; origY: number
   } | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [pendingDelete, setPendingDelete] = useState<string[] | null>(null)
+  const tableDragMoved = useRef(false)
+  const shiftOnTableClick = useRef(false)
+  const groupOrigPositions = useRef<Map<string, { x: number; y: number }>>(new Map())
   const [isAddTableOpen, setIsAddTableOpen] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>("grid")
 
-  // History management
-  const [history, setHistory] = useState<State[]>([])
-  const [currentIndex, setCurrentIndex] = useState(-1)
-  const canUndo = currentIndex > 0
-  const canRedo = currentIndex < history.length - 1
+  // History management — single atomic state so log and idx never drift apart
+  const [hist, setHist] = useState<{ log: State[]; idx: number }>({ log: [], idx: -1 })
+  const canUndo = hist.idx > 0
+  const canRedo = hist.idx < hist.log.length - 1
 
   const saveState = useCallback((newTables: Table[], newGuests: Guest[]) => {
     const newState = { tables: [...newTables], guests: [...newGuests] }
-    setHistory((prev) => {
-      // Clear any redo states
-      const newHistory = prev.slice(0, currentIndex + 1)
-      newHistory.push(newState)
-      return newHistory
+    setHist(prev => {
+      const newLog = prev.log.slice(0, prev.idx + 1)
+      newLog.push(newState)
+      return { log: newLog, idx: prev.idx + 1 }
     })
-    setCurrentIndex((prev) => prev + 1)
-  }, [currentIndex])
+  }, [])
 
   const undo = useCallback(() => {
-    if (canUndo) {
-      const newIndex = currentIndex - 1
-      const state = history[newIndex]
-      setTables([...state.tables])
-      setGuests([...state.guests])
-      setCurrentIndex(newIndex)
-    }
-  }, [canUndo, currentIndex, history])
+    if (!canUndo) return
+    const newIdx = hist.idx - 1
+    const state = hist.log[newIdx]
+    if (!state) return
+    setTables([...state.tables])
+    setGuests([...state.guests])
+    setHist(prev => ({ ...prev, idx: newIdx }))
+  }, [canUndo, hist])
 
   const redo = useCallback(() => {
-    if (canRedo) {
-      const newIndex = currentIndex + 1
-      const state = history[newIndex]
-      setTables([...state.tables])
-      setGuests([...state.guests])
-      setCurrentIndex(newIndex)
-    }
-  }, [canRedo, currentIndex, history])
+    if (!canRedo) return
+    const newIdx = hist.idx + 1
+    const state = hist.log[newIdx]
+    if (!state) return
+    setTables([...state.tables])
+    setGuests([...state.guests])
+    setHist(prev => ({ ...prev, idx: newIdx }))
+  }, [canRedo, hist])
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         if (e.shiftKey) {
           redo()
@@ -108,6 +120,27 @@ function PlannerContent() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [undo, redo])
+
+  // Backspace to delete selected tables
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Backspace') return
+      const active = document.activeElement
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || (active as HTMLElement).isContentEditable)) return
+      if (selectedIds.size > 0) {
+        e.preventDefault()
+        setPendingDelete([...selectedIds])
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedIds])
+
+  const handleRequestDelete = (id: string) => {
+    // If the table is part of the current selection, delete all selected; otherwise just this one
+    const ids = selectedIds.has(id) ? [...selectedIds] : [id]
+    setPendingDelete(ids)
+  }
 
   const [session, setSession] = useState<Session | null>(null)
 
@@ -135,6 +168,7 @@ function PlannerContent() {
   useEffect(() => {
     // DEV ONLY: skip data fetch, just stop the loading spinner
     if (process.env.NODE_ENV === 'development' && !session) {
+      setHist({ log: [{ tables: [], guests: [] }], idx: 0 })
       setLoading(false)
       return
     }
@@ -166,6 +200,7 @@ function PlannerContent() {
 
       setTables(tablesData)
       setGuests(guestsData)
+      setHist({ log: [{ tables: tablesData, guests: guestsData }], idx: 0 })
       setLoading(false)
     }
 
@@ -476,6 +511,8 @@ function PlannerContent() {
     if (e.button === 0 || e.button === 1 || (e.button === 0 && spacePressed)) {
       setIsDragging(true)
       setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y })
+      // Clicking canvas background clears selection
+      setSelectedIds(new Set())
     }
   }
 
@@ -485,8 +522,15 @@ function PlannerContent() {
 
   const handleTableDragStart = (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
+    shiftOnTableClick.current = e.shiftKey
+    tableDragMoved.current = false
     const table = tables.find(t => t.id === id)
     if (!table) return
+    // Capture original positions for all tables that will move together
+    const movingIds = selectedIds.has(id) ? selectedIds : new Set([id])
+    const map = new Map<string, { x: number; y: number }>()
+    tables.forEach(t => { if (movingIds.has(t.id)) map.set(t.id, { x: t.x, y: t.y }) })
+    groupOrigPositions.current = map
     setDraggingTable({ id, startMouseX: e.clientX, startMouseY: e.clientY, origX: table.x, origY: table.y })
   }
 
@@ -494,11 +538,14 @@ function PlannerContent() {
     if (draggingTable) {
       const dx = (e.clientX - draggingTable.startMouseX) / scale
       const dy = (e.clientY - draggingTable.startMouseY) / scale
-      setTables(prev => prev.map(t =>
-        t.id === draggingTable.id
-          ? { ...t, x: snapToGrid(draggingTable.origX + dx), y: snapToGrid(draggingTable.origY + dy) }
-          : t
-      ))
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) tableDragMoved.current = true
+      const isDraggingSelected = selectedIds.has(draggingTable.id)
+      setTables(prev => prev.map(t => {
+        const orig = groupOrigPositions.current.get(t.id)
+        if (!orig) return t
+        if (!isDraggingSelected && t.id !== draggingTable.id) return t
+        return { ...t, x: snapToGrid(orig.x + dx), y: snapToGrid(orig.y + dy) }
+      }))
       return
     }
     if (isDragging) {
@@ -510,8 +557,30 @@ function PlannerContent() {
 
   const handleMouseUp = () => {
     if (draggingTable) {
-      const table = tables.find(t => t.id === draggingTable.id)
-      if (table) handleUpdateTable(draggingTable.id, { x: snapToGrid(table.x), y: snapToGrid(table.y) })
+      if (!tableDragMoved.current) {
+        // Click (no drag) — handle selection
+        const id = draggingTable.id
+        setSelectedIds(prev => {
+          const next = new Set(prev)
+          if (shiftOnTableClick.current) {
+            next.has(id) ? next.delete(id) : next.add(id)
+          } else {
+            return new Set([id])
+          }
+          return next
+        })
+      } else {
+        // Actual drag — save final snapped positions in one history entry
+        const isDraggingSelected = selectedIds.has(draggingTable.id)
+        const movingIds = isDraggingSelected ? [...selectedIds] : [draggingTable.id]
+        if (!isDev) {
+          movingIds.forEach(id => {
+            const t = tables.find(t => t.id === id)
+            if (t) supabase?.from("tables").update({ x: t.x, y: t.y }).eq("id", id)
+          })
+        }
+        saveState([...tables], guests)
+      }
       setDraggingTable(null)
       return
     }
@@ -657,10 +726,12 @@ function PlannerContent() {
                     key={table.id}
                     table={table}
                     guests={guests.filter((guest) => guest.table_id === table.id)}
+                    isSelected={selectedIds.has(table.id)}
                     onUpdate={handleUpdateTable}
                     onDelete={handleDeleteTable}
                     onUpdateGuest={handleUpdateGuest}
                     onDragStart={handleTableDragStart}
+                    onRequestDelete={handleRequestDelete}
                   />
                 ))}
               </div>
@@ -690,6 +761,42 @@ function PlannerContent() {
             </div>
           </div>
         </div>
+
+      {/* Centralised delete confirmation — handles single, multi-select, and keyboard shortcut */}
+      {pendingDelete && (() => {
+        const names = pendingDelete.map(id => tables.find(t => t.id === id)?.name).filter(Boolean) as string[]
+        const count = names.length
+        return (
+          <AlertDialog open onOpenChange={(open) => { if (!open) setPendingDelete(null) }}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {count === 1 ? `Delete "${names[0]}"?` : `Delete ${count} tables?`}
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {count === 1
+                    ? `This will permanently remove "${names[0]}" and unassign all its guests.`
+                    : `This will permanently remove: ${names.join(', ')}. All assigned guests will be unassigned.`
+                  }{' '}This action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-red-500 hover:bg-red-600"
+                  onClick={() => {
+                    handleDeleteManyTables(pendingDelete)
+                    setSelectedIds(new Set())
+                    setPendingDelete(null)
+                  }}
+                >
+                  Delete {count > 1 ? `${count} tables` : 'table'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )
+      })()}
     </DndProvider>
   )
 }
