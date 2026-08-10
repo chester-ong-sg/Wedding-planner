@@ -7,10 +7,11 @@ import { DndProvider, useDrop } from "react-dnd"
 import { HTML5Backend } from "react-dnd-html5-backend"
 import { Sidebar } from "@/components/planner/sidebar-with-edit"
 import { KonvaStage } from "@/components/planner/konva-stage"
+import type { CanvasControls } from "@/components/planner/konva-stage"
 import { ExportCSV } from "@/components/planner/export-csv"
 import { CsvImport } from "@/components/planner/csv-import"
 import { Button } from "@/components/ui/button"
-import { Plus, Undo2, Redo2, Minus, Maximize2, Edit2, Users, Trash2 } from "lucide-react"
+import { Plus, Undo2, Redo2, Minus, Maximize2, Edit2, Users, Trash2, ImageDown } from "lucide-react"
 import { AuthProvider } from "@/components/auth-provider"
 import type { Guest, Table } from "@/types/planner"
 import type { ViewMode } from "@/components/planner/sidebar-with-edit"
@@ -280,6 +281,7 @@ interface PlannerCanvasProps {
   guests: Guest[]
   selectedIds: Set<string>
   stageRef: React.RefObject<Konva.Stage | null>
+  controlsRef: React.RefObject<CanvasControls | null>
   onSelect: (id: string, shiftKey: boolean) => void
   onDragEnd: (moves: TableMove[]) => void
   onStageClick: () => void
@@ -290,7 +292,7 @@ interface PlannerCanvasProps {
 }
 
 function PlannerCanvas({
-  tables, guests, selectedIds, stageRef,
+  tables, guests, selectedIds, stageRef, controlsRef,
   onSelect, onDragEnd, onStageClick, onMarqueeSelect, onDoubleClick, onContextMenu, onUpdateGuest,
 }: PlannerCanvasProps) {
   const [, stageDrop] = useDrop<DragItem, void, never>({
@@ -328,6 +330,7 @@ function PlannerCanvas({
     <div ref={stageDrop as unknown as React.RefCallback<HTMLDivElement>} className="w-full h-full">
       <KonvaStage
         stageRef={stageRef}
+        controlsRef={controlsRef}
         tables={tables}
         guests={guests}
         selectedIds={selectedIds}
@@ -360,6 +363,8 @@ function PlannerContent() {
 
   // Konva stage ref — used for zoom/pan and drop-target coordinate conversion
   const stageRef = useRef<Konva.Stage | null>(null)
+  // Imperative canvas controls (zoom / fit / export) published by KonvaStage
+  const canvasControls = useRef<CanvasControls | null>(null)
 
   // Dialog state
   const [editingTableId, setEditingTableId] = useState<string | null>(null)
@@ -498,22 +503,16 @@ function PlannerContent() {
     setSelectedIds(new Set(ids))
   }, [])
 
-  // Toolbar zoom — delegates to stage imperatively
-  const handleZoom = (delta: number) => {
-    const stage = stageRef.current
-    if (!stage) return
-    const newScale = Math.max(0.1, Math.min(3.0, stage.scaleX() + delta))
-    stage.scaleX(newScale)
-    stage.scaleY(newScale)
-    stage.batchDraw()
-  }
+  // Toolbar controls — delegate to the canvas so React state stays in sync
+  const handleZoom = (delta: number) => canvasControls.current?.zoomBy(delta)
+  const handleResetView = () => canvasControls.current?.fitToContent()
 
-  const handleResetView = () => {
-    const stage = stageRef.current
-    if (!stage) return
-    stage.scale({ x: 0.7, y: 0.7 })
-    stage.position({ x: 0, y: 0 })
-    stage.batchDraw()
+  const handleExportPNG = () => {
+    if (tables.length === 0) {
+      toast.error("Add a table before exporting")
+      return
+    }
+    canvasControls.current?.exportPNG("seating-chart.png")
   }
 
   // ── Data handlers (unchanged) ────────────────────────────────────────────
@@ -784,6 +783,7 @@ function PlannerContent() {
             guests={guests}
             selectedIds={selectedIds}
             stageRef={stageRef}
+            controlsRef={canvasControls}
             onSelect={handleTableSelect}
             onDragEnd={handleTableDragEnd}
             onStageClick={() => setSelectedIds(new Set())}
@@ -812,6 +812,15 @@ function PlannerContent() {
               <Redo2 className="h-4 w-4" />
             </Button>
             <div className="w-px h-5 bg-gray-200 mx-1" />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 rounded-lg"
+              onClick={handleExportPNG}
+              title="Export canvas as PNG"
+            >
+              <ImageDown className="h-4 w-4" />
+            </Button>
             <CsvImport onImport={handleImport} />
             <ExportCSV guests={guests} tables={tables} />
           </div>
