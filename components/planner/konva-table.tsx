@@ -2,6 +2,7 @@
 
 import { Group, Circle, Rect, Text } from "react-konva"
 import type { KonvaEventObject } from "konva/lib/Node"
+import type Konva from "konva"
 import type { Table } from "@/types/planner"
 
 export const TABLE_RADIUS = 75
@@ -10,7 +11,7 @@ export const RECT_W = 200
 export const RECT_H = 100
 export const SNAP = 40
 
-const snap = (v: number) => Math.round(v / SNAP) * SNAP
+export const snap = (v: number) => Math.round(v / SNAP) * SNAP
 
 interface Props {
   table: Table
@@ -20,9 +21,12 @@ interface Props {
   onDragEnd: (id: string, x: number, y: number) => void
   onDoubleClick: (id: string) => void
   onContextMenu: (id: string, clientX: number, clientY: number) => void
+  nodeRef?: (node: Konva.Group | null) => void
+  onDragStart?: (id: string) => void
+  onDragMove?: (id: string, x: number, y: number) => void
 }
 
-export function KonvaTable({ table, guestCount, isSelected, onSelect, onDragEnd, onDoubleClick, onContextMenu }: Props) {
+export function KonvaTable({ table, guestCount, isSelected, onSelect, onDragEnd, onDoubleClick, onContextMenu, nodeRef, onDragStart, onDragMove }: Props) {
   const fill = isSelected ? "#eff6ff" : "#ffffff"
   const stroke = isSelected ? "#3b82f6" : "#1f2937"
   const strokeWidth = isSelected ? 2.5 : 2
@@ -46,6 +50,7 @@ export function KonvaTable({ table, guestCount, isSelected, onSelect, onDragEnd,
 
   return (
     <Group
+      ref={nodeRef}
       x={table.x}
       y={table.y}
       draggable
@@ -55,8 +60,12 @@ export function KonvaTable({ table, guestCount, isSelected, onSelect, onDragEnd,
         e.evt.preventDefault()
         onContextMenu(table.id, e.evt.clientX, e.evt.clientY)
       }}
+      onDragStart={() => onDragStart?.(table.id)}
       onDragMove={(e: KonvaEventObject<DragEvent>) => {
-        e.target.position({ x: snap(e.target.x()), y: snap(e.target.y()) })
+        const sx = snap(e.target.x())
+        const sy = snap(e.target.y())
+        e.target.position({ x: sx, y: sy })
+        onDragMove?.(table.id, sx, sy)
       }}
       onDragEnd={(e: KonvaEventObject<DragEvent>) => {
         onDragEnd(table.id, snap(e.target.x()), snap(e.target.y()))

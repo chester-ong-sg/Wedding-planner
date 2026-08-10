@@ -269,14 +269,21 @@ function ViewGuestsDialog({
 // ─── PlannerCanvas ────────────────────────────────────────────────────────────
 // Must be a child of DndProvider so useDrop works
 
+interface TableMove {
+  id: string
+  x: number
+  y: number
+}
+
 interface PlannerCanvasProps {
   tables: Table[]
   guests: Guest[]
   selectedIds: Set<string>
   stageRef: React.RefObject<Konva.Stage | null>
   onSelect: (id: string, shiftKey: boolean) => void
-  onDragEnd: (id: string, x: number, y: number) => void
+  onDragEnd: (moves: TableMove[]) => void
   onStageClick: () => void
+  onMarqueeSelect: (ids: string[]) => void
   onDoubleClick: (id: string) => void
   onContextMenu: (id: string, clientX: number, clientY: number) => void
   onUpdateGuest: (id: string, updates: Partial<Guest>) => Promise<void>
@@ -284,7 +291,7 @@ interface PlannerCanvasProps {
 
 function PlannerCanvas({
   tables, guests, selectedIds, stageRef,
-  onSelect, onDragEnd, onStageClick, onDoubleClick, onContextMenu, onUpdateGuest,
+  onSelect, onDragEnd, onStageClick, onMarqueeSelect, onDoubleClick, onContextMenu, onUpdateGuest,
 }: PlannerCanvasProps) {
   const [, stageDrop] = useDrop<DragItem, void, never>({
     accept: "guest",
@@ -327,6 +334,7 @@ function PlannerCanvas({
         onSelect={onSelect}
         onDragEnd={onDragEnd}
         onStageClick={onStageClick}
+        onMarqueeSelect={onMarqueeSelect}
         onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
       />
@@ -474,14 +482,21 @@ function PlannerContent() {
     })
   }, [])
 
-  const handleTableDragEnd = useCallback(async (id: string, x: number, y: number) => {
-    const newTables = tables.map(t => t.id === id ? { ...t, x, y } : t)
+  const handleTableDragEnd = useCallback(async (moves: TableMove[]) => {
+    const newTables = tables.map(t => {
+      const move = moves.find(m => m.id === t.id)
+      return move ? { ...t, x: move.x, y: move.y } : t
+    })
     setTables(newTables)
     saveState(newTables, guests)
     if (!isDev) {
-      await supabase!.from("tables").update({ x, y }).eq("id", id)
+      await Promise.all(moves.map(m => supabase!.from("tables").update({ x: m.x, y: m.y }).eq("id", m.id)))
     }
   }, [tables, guests, isDev, supabase, saveState])
+
+  const handleMarqueeSelect = useCallback((ids: string[]) => {
+    setSelectedIds(new Set(ids))
+  }, [])
 
   // Toolbar zoom — delegates to stage imperatively
   const handleZoom = (delta: number) => {
@@ -772,6 +787,7 @@ function PlannerContent() {
             onSelect={handleTableSelect}
             onDragEnd={handleTableDragEnd}
             onStageClick={() => setSelectedIds(new Set())}
+            onMarqueeSelect={handleMarqueeSelect}
             onDoubleClick={(id) => setViewingGuestsTableId(id)}
             onContextMenu={(id, x, y) => { setContextMenu({ tableId: id, x, y }) }}
             onUpdateGuest={handleUpdateGuest}

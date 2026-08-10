@@ -1,10 +1,10 @@
 "use client"
 
-import { useRef, useEffect, useState } from "react"
+import { useRef, useEffect, useState, useCallback } from "react"
 import { Stage, Layer, Rect } from "react-konva"
 import type Konva from "konva"
 import type { KonvaEventObject } from "konva/lib/Node"
-import { KonvaTable } from "./konva-table"
+import { KonvaTable, TABLE_RADIUS, SQ_W, RECT_W, RECT_H, snap } from "./konva-table"
 import type { Table, Guest } from "@/types/planner"
 
 const SCALE_BY = 1.06
@@ -13,27 +13,48 @@ const MAX_SCALE = 3.0
 const INITIAL_SCALE = 0.7
 const GRID_SIZE = 160
 
+interface TableMove {
+  id: string
+  x: number
+  y: number
+}
+
 interface Props {
   tables: Table[]
   guests: Guest[]
   selectedIds: Set<string>
   stageRef: React.RefObject<Konva.Stage | null>
   onSelect: (id: string, shiftKey: boolean) => void
-  onDragEnd: (id: string, x: number, y: number) => void
+  onDragEnd: (moves: TableMove[]) => void
   onStageClick: () => void
+  onMarqueeSelect: (ids: string[]) => void
   onDoubleClick: (id: string) => void
   onContextMenu: (id: string, clientX: number, clientY: number) => void
 }
 
 export function KonvaStage({
   tables, guests, selectedIds, stageRef,
-  onSelect, onDragEnd, onStageClick, onDoubleClick, onContextMenu,
+  onSelect, onDragEnd, onStageClick, onMarqueeSelect, onDoubleClick, onContextMenu,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [scale, setScale] = useState(INITIAL_SCALE)
   const [pos, setPos] = useState({ x: 0, y: 0 })
   const [gridPattern, setGridPattern] = useState<HTMLCanvasElement | null>(null)
+
+  // Marquee state
+  const [marquee, setMarquee] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
+  const marqueeStartRef = useRef<{ x: number; y: number } | null>(null)
+  const isMarqueeingRef = useRef(false)
+  const spaceHeldRef = useRef(false)
+
+  // Group drag refs
+  const nodeRefs = useRef<Map<string, Konva.Group>>(new Map())
+  const dragStartPositions = useRef<Map<string, { x: number; y: number }>>(new Map())
+
+  // selectedIds ref so event handlers always see current value without re-creating
+  const selectedIdsRef = useRef(selectedIds)
+  useEffect(() => { selectedIdsRef.current = selectedIds }, [selectedIds])
 
   // Measure container so Stage fills it exactly
   useEffect(() => {
@@ -61,6 +82,25 @@ export function KonvaStage({
     setGridPattern(c)
   }, [])
 
+  // Space key: hold to pan
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space" && !e.repeat) {
+        e.preventDefault()
+        spaceHeldRef.current = true
+      }
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") spaceHeldRef.current = false
+    }
+    window.addEventListener("keydown", onKeyDown)
+    window.addEventListener("keyup", onKeyUp)
+    return () => {
+      window.removeEventListener("keydown", onKeyDown)
+      window.removeEventListener("keyup", onKeyUp)
+    }
+  }, [])
+
   const handleWheel = (e: KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault()
     const stage = stageRef.current
@@ -75,30 +115,132 @@ export function KonvaStage({
     const newScale = e.evt.deltaY < 0
       ? Math.min(oldScale * SCALE_BY, MAX_SCALE)
       : Math.max(oldScale / SCALE_BY, MIN_SCALE)
-    const newPos = {
+    setScale(newScale)
+    setPos({
       x: pointer.x - origin.x * newScale,
       y: pointer.y - origin.y * newScale,
-    }
-    setScale(newScale)
-    setPos(newPos)
+    })
   }
 
   const handleMouseDown = (e: KonvaEventObject<MouseEvent>) => {
     const stage = stageRef.current
     if (!stage) return
-    // Only pan when clicking on the stage background (not a shape)
     if (e.target === stage) {
-      stage.draggable(true)
-      onStageClick()
+      if (spaceHeldRef.current) {
+        // Space held → pan mode
+        stage.draggable(true)
+      } else {
+        // Start potential marquee
+        stage.draggable(false)
+        const pos = stage.getRelativePointerPosition()
+        if (pos) {
+          marqueeStartRef.current = pos
+          isMarqueeingRef.current = false
+        }
+      }
     } else {
       stage.draggable(false)
     }
   }
 
-  const handleDragEnd = (e: KonvaEventObject<DragEvent>) => {
-    setPos({ x: e.target.x(), y: e.target.y() })
+  const handleMouseMove = (e: KonvaEventObject<MouseEvent>) => {
+    if (!marqueeStartRef.current) return
     const stage = stageRef.current
-    if (stage) stage.draggable(false)
+    if (!stage) return
+    const pos = stage.getRelativePointerPosition()
+    if (!pos) return
+    const start = marqueeStartRef.current
+    const dx = pos.x - start.x
+    const dy = pos.y - start.y
+    if (!isMarqueeingRef.current && dx * dx + dy * dy > 25) {
+      isMarqueeingRef.current = true
+    }
+    if (isMarqueeingRef.current) {
+      setMarquee({ x1: start.x, y1: start.y, x2: pos.x, y2: pos.y })
+    }
+  }
+
+  const handleMouseUp = useCallback(() => {
+    const stage = stageRef.current
+    if (isMarqueeingRef.current && stage && marqueeStartRef.current) {
+      const pos = stage.getRelativePointerPosition()
+      if (pos) {
+        const start = marqueeStartRef.current
+        const mx = Math.min(start.x, pos.x)
+        const my = Math.min(start.y, pos.y)
+        const mw = Math.abs(pos.x - start.x)
+        const mh = Math.abs(pos.y - start.y)
+        const selected = tables
+          .filter(t => {
+            const tw = t.shape === "rectangular" ? RECT_W : SQ_W
+            const th = t.shape === "rectangular" ? RECT_H : SQ_W
+            // Intersection: table overlaps marquee rect
+            return !(t.x + tw < mx || t.x > mx + mw || t.y + th < my || t.y > my + mh)
+          })
+          .map(t => t.id)
+        onMarqueeSelect(selected)
+      }
+    } else if (!isMarqueeingRef.current && marqueeStartRef.current) {
+      // Plain click on background → clear selection
+      onStageClick()
+    }
+    marqueeStartRef.current = null
+    isMarqueeingRef.current = false
+    setMarquee(null)
+  }, [tables, onMarqueeSelect, onStageClick, stageRef])
+
+  const handleDragEnd = (e: KonvaEventObject<DragEvent>) => {
+    // Ignore dragend events that bubbled up from table nodes
+    if (e.target !== stageRef.current) return
+    setPos({ x: e.target.x(), y: e.target.y() })
+    stageRef.current!.draggable(false)
+  }
+
+  // ── Group drag coordination ──────────────────────────────────────────────
+
+  const handleTableDragStart = useCallback((id: string) => {
+    const starts = new Map<string, { x: number; y: number }>()
+    // Record start positions for all selected tables + the dragging one
+    const all = new Set([...selectedIdsRef.current, id])
+    all.forEach(sid => {
+      const node = nodeRefs.current.get(sid)
+      if (node) starts.set(sid, { x: node.x(), y: node.y() })
+    })
+    dragStartPositions.current = starts
+  }, [])
+
+  const handleTableDragMove = useCallback((id: string, sx: number, sy: number) => {
+    if (!selectedIdsRef.current.has(id)) return
+    const start = dragStartPositions.current.get(id)
+    if (!start) return
+    const dx = sx - start.x
+    const dy = sy - start.y
+    selectedIdsRef.current.forEach(sid => {
+      if (sid === id) return
+      const node = nodeRefs.current.get(sid)
+      const nodeStart = dragStartPositions.current.get(sid)
+      if (!node || !nodeStart) return
+      node.position({ x: snap(nodeStart.x + dx), y: snap(nodeStart.y + dy) })
+    })
+  }, [])
+
+  const handleTableDragEnd = useCallback((id: string, x: number, y: number) => {
+    const moves: TableMove[] = []
+    if (selectedIdsRef.current.has(id) && selectedIdsRef.current.size > 1) {
+      // Collect final snapped positions for all selected nodes
+      selectedIdsRef.current.forEach(sid => {
+        const node = nodeRefs.current.get(sid)
+        if (node) moves.push({ id: sid, x: snap(node.x()), y: snap(node.y()) })
+      })
+    } else {
+      moves.push({ id, x, y })
+    }
+    onDragEnd(moves)
+  }, [onDragEnd])
+
+  const getNodeRef = (id: string) => (node: Konva.Group | null) => {
+    if (node) nodeRefs.current.set(id, node)
+    else nodeRefs.current.delete(id)
   }
 
   return (
@@ -114,6 +256,8 @@ export function KonvaStage({
           y={pos.y}
           onWheel={handleWheel}
           onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
           onDragEnd={handleDragEnd}
         >
           {/* Non-interactive grid background */}
@@ -139,11 +283,29 @@ export function KonvaStage({
                 guestCount={guests.filter(g => g.table_id === t.id).length}
                 isSelected={selectedIds.has(t.id)}
                 onSelect={onSelect}
-                onDragEnd={onDragEnd}
+                onDragEnd={handleTableDragEnd}
                 onDoubleClick={onDoubleClick}
                 onContextMenu={onContextMenu}
+                nodeRef={getNodeRef(t.id)}
+                onDragStart={handleTableDragStart}
+                onDragMove={handleTableDragMove}
               />
             ))}
+
+            {/* Marquee selection rectangle */}
+            {marquee && (
+              <Rect
+                x={Math.min(marquee.x1, marquee.x2)}
+                y={Math.min(marquee.y1, marquee.y2)}
+                width={Math.abs(marquee.x2 - marquee.x1)}
+                height={Math.abs(marquee.y2 - marquee.y1)}
+                fill="rgba(59,130,246,0.08)"
+                stroke="#3b82f6"
+                strokeWidth={1 / scale}
+                dash={[4 / scale, 4 / scale]}
+                listening={false}
+              />
+            )}
           </Layer>
         </Stage>
       )}
