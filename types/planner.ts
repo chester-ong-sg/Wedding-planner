@@ -27,6 +27,21 @@ export interface Guest {
   updated_at: string
 }
 
+/**
+ * A freehand pencil stroke on the canvas.
+ * `points` is a flat [x1, y1, p1, x2, y2, p2, ...] triple per sample — the third
+ * value is pointer pressure (0..1), used to vary stroke width.
+ */
+export interface Drawing {
+  id: string
+  points: number[]
+  color: string
+  width: number
+  user_id: string
+  created_at: string
+  updated_at: string
+}
+
 export interface DraggableItemType {
   type: "TABLE" | "GUEST"
   id: string

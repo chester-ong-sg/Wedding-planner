@@ -7,17 +7,18 @@ import { DndProvider, useDrop } from "react-dnd"
 import { HTML5Backend } from "react-dnd-html5-backend"
 import { Sidebar } from "@/components/planner/sidebar-with-edit"
 import { KonvaStage } from "@/components/planner/konva-stage"
-import type { CanvasControls } from "@/components/planner/konva-stage"
+import type { CanvasControls, PlannerTool } from "@/components/planner/konva-stage"
 import { ExportCSV } from "@/components/planner/export-csv"
 import { CsvImport } from "@/components/planner/csv-import"
 import { Button } from "@/components/ui/button"
-import { Plus, Undo2, Redo2, Minus, Maximize2, Edit2, Users, Trash2, ImageDown } from "lucide-react"
+import { Plus, Undo2, Redo2, Minus, Maximize2, Edit2, Users, Trash2, ImageDown, Pencil, Eraser, MousePointer2 } from "lucide-react"
 import { AuthProvider } from "@/components/auth-provider"
-import type { Guest, Table } from "@/types/planner"
+import type { Guest, Table, Drawing } from "@/types/planner"
 import type { ViewMode } from "@/components/planner/sidebar-with-edit"
 import type { Session } from "@supabase/supabase-js"
 import type Konva from "konva"
 import { TABLE_RADIUS, SQ_W, RECT_W, RECT_H } from "@/components/planner/konva-table"
+import { PENCIL_COLOR, PENCIL_WIDTH } from "@/components/planner/konva-drawing"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -49,6 +50,7 @@ import { Label } from "@/components/ui/label"
 interface AppState {
   tables: Table[]
   guests: Guest[]
+  drawings: Drawing[]
 }
 
 interface DragItem {
@@ -279,6 +281,10 @@ interface TableMove {
 interface PlannerCanvasProps {
   tables: Table[]
   guests: Guest[]
+  drawings: Drawing[]
+  tool: PlannerTool
+  onDrawEnd: (points: number[]) => void
+  onErase: (id: string) => void
   selectedIds: Set<string>
   stageRef: React.RefObject<Konva.Stage | null>
   controlsRef: React.RefObject<CanvasControls | null>
@@ -292,8 +298,9 @@ interface PlannerCanvasProps {
 }
 
 function PlannerCanvas({
-  tables, guests, selectedIds, stageRef, controlsRef,
+  tables, guests, drawings, tool, selectedIds, stageRef, controlsRef,
   onSelect, onDragEnd, onStageClick, onMarqueeSelect, onDoubleClick, onContextMenu, onUpdateGuest,
+  onDrawEnd, onErase,
 }: PlannerCanvasProps) {
   const [, stageDrop] = useDrop<DragItem, void, never>({
     accept: "guest",
@@ -333,6 +340,8 @@ function PlannerCanvas({
         controlsRef={controlsRef}
         tables={tables}
         guests={guests}
+        drawings={drawings}
+        tool={tool}
         selectedIds={selectedIds}
         onSelect={onSelect}
         onDragEnd={onDragEnd}
@@ -340,6 +349,8 @@ function PlannerCanvas({
         onMarqueeSelect={onMarqueeSelect}
         onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
+        onDrawEnd={onDrawEnd}
+        onErase={onErase}
       />
     </div>
   )
@@ -355,6 +366,10 @@ function PlannerContent() {
 
   const [tables, setTables] = useState<Table[]>([])
   const [guests, setGuests] = useState<Guest[]>([])
+  const [drawings, setDrawings] = useState<Drawing[]>([])
+  const [tool, setTool] = useState<PlannerTool>("select")
+  // Mirrors `drawings` so saveState can default to it without a stale closure
+  const drawingsRef = useRef<Drawing[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null)
@@ -376,8 +391,15 @@ function PlannerContent() {
   const canUndo = hist.idx > 0
   const canRedo = hist.idx < hist.log.length - 1
 
-  const saveState = useCallback((newTables: Table[], newGuests: Guest[]) => {
-    const newState = { tables: [...newTables], guests: [...newGuests] }
+  useEffect(() => { drawingsRef.current = drawings }, [drawings])
+
+  const saveState = useCallback((newTables: Table[], newGuests: Guest[], newDrawings?: Drawing[]) => {
+    const newState = {
+      tables: [...newTables],
+      guests: [...newGuests],
+      // Callers that don't touch drawings carry the current set forward
+      drawings: [...(newDrawings ?? drawingsRef.current)],
+    }
     setHist(prev => {
       const newLog = prev.log.slice(0, prev.idx + 1)
       newLog.push(newState)
@@ -392,6 +414,7 @@ function PlannerContent() {
     if (!state) return
     setTables([...state.tables])
     setGuests([...state.guests])
+    setDrawings([...(state.drawings ?? [])])
     setHist(prev => ({ ...prev, idx: newIdx }))
   }, [canUndo, hist])
 
@@ -402,6 +425,7 @@ function PlannerContent() {
     if (!state) return
     setTables([...state.tables])
     setGuests([...state.guests])
+    setDrawings([...(state.drawings ?? [])])
     setHist(prev => ({ ...prev, idx: newIdx }))
   }, [canRedo, hist])
 
@@ -439,6 +463,21 @@ function PlannerContent() {
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
+  // Tool shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const active = document.activeElement
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || (active as HTMLElement).isContentEditable)) return
+      const next = { v: 'select', p: 'pencil', e: 'eraser' }[e.key.toLowerCase()]
+      if (!next) return
+      setTool(next as PlannerTool)
+      if (next !== 'select') setSelectedIds(new Set())
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
   const [session, setSession] = useState<Session | null>(null)
 
   useEffect(() => {
@@ -452,7 +491,7 @@ function PlannerContent() {
 
   useEffect(() => {
     if (process.env.NODE_ENV === 'development' && !session) {
-      setHist({ log: [{ tables: [], guests: [] }], idx: 0 })
+      setHist({ log: [{ tables: [], guests: [], drawings: [] }], idx: 0 })
       setLoading(false)
       return
     }
@@ -464,9 +503,16 @@ function PlannerContent() {
       const { data: guestsData, error: guestsError } = await supabase!
         .from("guests").select("*").eq("user_id", session.user.id).order("created_at", { ascending: true })
       if (guestsError) { console.error("Error fetching guests:", guestsError); return }
+      const { data: drawingsData, error: drawingsError } = await supabase!
+        .from("drawings").select("*").eq("user_id", session.user.id).order("created_at", { ascending: true })
+      // Drawings are additive — if the migration hasn't been applied yet the
+      // planner should still load rather than blocking on a missing table.
+      if (drawingsError) console.error("Error fetching drawings:", drawingsError)
+      const loadedDrawings = drawingsData ?? []
       setTables(tablesData)
       setGuests(guestsData)
-      setHist({ log: [{ tables: tablesData, guests: guestsData }], idx: 0 })
+      setDrawings(loadedDrawings)
+      setHist({ log: [{ tables: tablesData, guests: guestsData, drawings: loadedDrawings }], idx: 0 })
       setLoading(false)
     }
     fetchData()
@@ -503,13 +549,57 @@ function PlannerContent() {
     setSelectedIds(new Set(ids))
   }, [])
 
+  const handleDrawEnd = useCallback(async (points: number[]) => {
+    const now = new Date().toISOString()
+    const record: Drawing = {
+      id: crypto.randomUUID(),
+      points,
+      color: PENCIL_COLOR,
+      width: PENCIL_WIDTH,
+      user_id: isDev ? "dev" : (session?.user.id ?? ""),
+      created_at: now,
+      updated_at: now,
+    }
+    // Paint optimistically — the stroke is already on screen
+    const next = [...drawingsRef.current, record]
+    setDrawings(next)
+    saveState(tables, guests, next)
+
+    if (!isDev) {
+      const { error } = await supabase!.from("drawings").insert({
+        id: record.id, points, color: record.color, width: record.width, user_id: record.user_id,
+      })
+      if (error) {
+        console.error("Error saving drawing:", error)
+        toast.error("Couldn't save that stroke")
+        setDrawings(prev => prev.filter(d => d.id !== record.id))
+      }
+    }
+  }, [tables, guests, isDev, supabase, session, saveState])
+
+  const handleErase = useCallback(async (id: string) => {
+    const next = drawingsRef.current.filter(d => d.id !== id)
+    setDrawings(next)
+    saveState(tables, guests, next)
+    if (!isDev) {
+      const { error } = await supabase!.from("drawings").delete().eq("id", id)
+      if (error) console.error("Error deleting drawing:", error)
+    }
+  }, [tables, guests, isDev, supabase, saveState])
+
+  // Leaving select mode drops the selection so the highlight doesn't linger
+  const handleToolChange = useCallback((next: PlannerTool) => {
+    setTool(next)
+    if (next !== "select") setSelectedIds(new Set())
+  }, [])
+
   // Toolbar controls — delegate to the canvas so React state stays in sync
   const handleZoom = (delta: number) => canvasControls.current?.zoomBy(delta)
   const handleResetView = () => canvasControls.current?.fitToContent()
 
   const handleExportPNG = () => {
-    if (tables.length === 0) {
-      toast.error("Add a table before exporting")
+    if (tables.length === 0 && drawings.length === 0) {
+      toast.error("Nothing on the canvas to export yet")
       return
     }
     canvasControls.current?.exportPNG("seating-chart.png")
@@ -781,6 +871,10 @@ function PlannerContent() {
           <PlannerCanvas
             tables={tables}
             guests={guests}
+            drawings={drawings}
+            tool={tool}
+            onDrawEnd={handleDrawEnd}
+            onErase={handleErase}
             selectedIds={selectedIds}
             stageRef={stageRef}
             controlsRef={canvasControls}
@@ -795,6 +889,31 @@ function PlannerContent() {
 
           {/* Floating toolbar */}
           <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 bg-white border border-gray-200 rounded-xl shadow-lg px-2 py-1.5">
+            <Button
+              variant={tool === "select" ? "secondary" : "ghost"}
+              size="icon" className="h-8 w-8 rounded-lg"
+              onClick={() => handleToolChange("select")}
+              title="Select (V)"
+            >
+              <MousePointer2 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={tool === "pencil" ? "secondary" : "ghost"}
+              size="icon" className="h-8 w-8 rounded-lg"
+              onClick={() => handleToolChange("pencil")}
+              title="Pencil (P)"
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={tool === "eraser" ? "secondary" : "ghost"}
+              size="icon" className="h-8 w-8 rounded-lg"
+              onClick={() => handleToolChange("eraser")}
+              title="Eraser (E) — click a stroke to remove it"
+            >
+              <Eraser className="h-4 w-4" />
+            </Button>
+            <div className="w-px h-5 bg-gray-200 mx-1" />
             <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => handleZoom(0.1)}>
               <Plus className="h-4 w-4" />
             </Button>

@@ -51,6 +51,8 @@ interface Props {
   isSelected: boolean
   /** Zoomed in far enough that individual guest names are legible. */
   showNames: boolean
+  /** False while a drawing tool is active, so strokes aren't hijacked by tables. */
+  interactive: boolean
   onSelect: (id: string, shiftKey: boolean) => void
   onDragEnd: (id: string, x: number, y: number) => void
   onDoubleClick: (id: string) => void
@@ -61,7 +63,7 @@ interface Props {
 }
 
 export function KonvaTable({
-  table, guestNames, isSelected, showNames,
+  table, guestNames, isSelected, showNames, interactive,
   onSelect, onDragEnd, onDoubleClick, onContextMenu, nodeRef, onDragStart, onDragMove,
 }: Props) {
   const fill = isSelected ? "#eff6ff" : "#ffffff"
@@ -93,7 +95,8 @@ export function KonvaTable({
       ref={nodeRef}
       x={table.x}
       y={table.y}
-      draggable
+      draggable={interactive}
+      listening={interactive}
       onClick={(e: KonvaEventObject<MouseEvent>) => onSelect(table.id, e.evt.shiftKey)}
       onDblClick={() => onDoubleClick(table.id)}
       onContextMenu={(e: KonvaEventObject<MouseEvent>) => {

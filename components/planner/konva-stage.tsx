@@ -1,11 +1,12 @@
 "use client"
 
 import { useRef, useEffect, useState, useCallback } from "react"
-import { Stage, Layer, Rect } from "react-konva"
+import { Stage, Layer, Rect, Line } from "react-konva"
 import type Konva from "konva"
 import type { KonvaEventObject } from "konva/lib/Node"
 import { KonvaTable, TABLE_RADIUS, SQ_W, RECT_W, RECT_H, snap } from "./konva-table"
-import type { Table, Guest } from "@/types/planner"
+import { KonvaDrawing, strokeOutline, strokeBounds, grainTile, asPatternImage, PENCIL_COLOR, PENCIL_WIDTH } from "./konva-drawing"
+import type { Table, Guest, Drawing } from "@/types/planner"
 
 const SCALE_BY = 1.06
 const MIN_SCALE = 0.1
@@ -18,6 +19,11 @@ const NAME_LOD_SCALE = 0.9
 
 /** Padding around the content bounding box, in canvas units. */
 const CONTENT_PAD = 60
+
+/** Minimum pointer travel (screen px) before a new sample is recorded. */
+const SAMPLE_DIST = 2
+
+export type PlannerTool = "select" | "pencil" | "eraser"
 
 interface TableMove {
   id: string
@@ -34,7 +40,9 @@ export interface CanvasControls {
 interface Props {
   tables: Table[]
   guests: Guest[]
+  drawings: Drawing[]
   selectedIds: Set<string>
+  tool: PlannerTool
   stageRef: React.RefObject<Konva.Stage | null>
   controlsRef: React.RefObject<CanvasControls | null>
   onSelect: (id: string, shiftKey: boolean) => void
@@ -43,19 +51,26 @@ interface Props {
   onMarqueeSelect: (ids: string[]) => void
   onDoubleClick: (id: string) => void
   onContextMenu: (id: string, clientX: number, clientY: number) => void
+  onDrawEnd: (points: number[]) => void
+  onErase: (id: string) => void
 }
 
-/** Bounding box of every table, padded, in canvas coordinates. */
-function contentBBox(tables: Table[]) {
+/** Bounding box of all canvas content, padded, in canvas coordinates. */
+function contentBBox(tables: Table[], drawings: Drawing[]) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   for (const t of tables) {
     const w = t.shape === "rectangular" ? RECT_W : SQ_W
     const h = t.shape === "rectangular" ? RECT_H : SQ_W
-    minX = Math.min(minX, t.x)
-    minY = Math.min(minY, t.y)
-    maxX = Math.max(maxX, t.x + w)
-    maxY = Math.max(maxY, t.y + h)
+    minX = Math.min(minX, t.x); maxX = Math.max(maxX, t.x + w)
+    minY = Math.min(minY, t.y); maxY = Math.max(maxY, t.y + h)
   }
+  for (const d of drawings) {
+    const b = strokeBounds(d.points)
+    if (!Number.isFinite(b.minX)) continue
+    minX = Math.min(minX, b.minX - d.width); maxX = Math.max(maxX, b.maxX + d.width)
+    minY = Math.min(minY, b.minY - d.width); maxY = Math.max(maxY, b.maxY + d.width)
+  }
+  if (!Number.isFinite(minX)) return { x: 0, y: 0, width: 0, height: 0 }
   return {
     x: minX - CONTENT_PAD,
     y: minY - CONTENT_PAD,
@@ -65,8 +80,9 @@ function contentBBox(tables: Table[]) {
 }
 
 export function KonvaStage({
-  tables, guests, selectedIds, stageRef, controlsRef,
+  tables, guests, drawings, selectedIds, tool, stageRef, controlsRef,
   onSelect, onDragEnd, onStageClick, onMarqueeSelect, onDoubleClick, onContextMenu,
+  onDrawEnd, onErase,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -74,8 +90,6 @@ export function KonvaStage({
   const [pos, setPos] = useState({ x: 0, y: 0 })
   const [gridPattern, setGridPattern] = useState<HTMLCanvasElement | null>(null)
 
-  // Export runs across a render: the flag strips selection/grid chrome, then an
-  // effect captures the now-clean scene.
   const [isExporting, setIsExporting] = useState(false)
   const exportNameRef = useRef("seating-chart.png")
 
@@ -85,17 +99,24 @@ export function KonvaStage({
   const isMarqueeingRef = useRef(false)
   const spaceHeldRef = useRef(false)
 
+  // Live pencil stroke. Kept in refs and pushed straight onto the Konva node —
+  // routing 60fps pointer samples through setState would stutter badly.
+  const drawLayerRef = useRef<Konva.Layer>(null)
+  const liveLineRef = useRef<Konva.Line>(null)
+  const livePointsRef = useRef<number[]>([])
+  const isDrawingRef = useRef(false)
+
   // Group drag refs
   const nodeRefs = useRef<Map<string, Konva.Group>>(new Map())
   const dragStartPositions = useRef<Map<string, { x: number; y: number }>>(new Map())
 
-  // selectedIds ref so event handlers always see the current value
   const selectedIdsRef = useRef(selectedIds)
   useEffect(() => { selectedIdsRef.current = selectedIds }, [selectedIds])
+  const toolRef = useRef(tool)
+  useEffect(() => { toolRef.current = tool }, [tool])
 
   const showNames = scale >= NAME_LOD_SCALE
 
-  // Measure container so Stage fills it exactly
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -106,7 +127,6 @@ export function KonvaStage({
     return () => ro.disconnect()
   }, [])
 
-  // Build a tiny repeating grid tile once
   useEffect(() => {
     const c = document.createElement("canvas")
     c.width = GRID_SIZE
@@ -121,7 +141,6 @@ export function KonvaStage({
     setGridPattern(c)
   }, [])
 
-  // Space key: hold to pan
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === "Space" && !e.repeat) {
@@ -140,14 +159,21 @@ export function KonvaStage({
     }
   }, [])
 
-  // ── Imperative controls exposed to the toolbar ────────────────────────────
+  // Cursor reflects the active tool
+  useEffect(() => {
+    const c = stageRef.current?.container()
+    if (!c) return
+    c.style.cursor = tool === "pencil" ? "crosshair" : tool === "eraser" ? "cell" : ""
+    return () => { c.style.cursor = "" }
+  }, [tool, size.width, stageRef])
+
+  // ── Imperative controls ───────────────────────────────────────────────────
 
   const zoomBy = useCallback((delta: number) => {
     const stage = stageRef.current
     if (!stage) return
     const oldScale = stage.scaleX()
     const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, oldScale + delta))
-    // Keep the viewport centre fixed rather than the canvas origin
     const centre = { x: stage.width() / 2, y: stage.height() / 2 }
     const origin = {
       x: (centre.x - stage.x()) / oldScale,
@@ -160,12 +186,12 @@ export function KonvaStage({
   const fitToContent = useCallback(() => {
     const stage = stageRef.current
     if (!stage) return
-    if (tables.length === 0) {
+    if (tables.length === 0 && drawings.length === 0) {
       setScale(INITIAL_SCALE)
       setPos({ x: 0, y: 0 })
       return
     }
-    const box = contentBBox(tables)
+    const box = contentBBox(tables, drawings)
     const newScale = Math.max(
       MIN_SCALE,
       Math.min(MAX_SCALE, Math.min(stage.width() / box.width, stage.height() / box.height)),
@@ -175,39 +201,33 @@ export function KonvaStage({
       x: (stage.width() - box.width * newScale) / 2 - box.x * newScale,
       y: (stage.height() - box.height * newScale) / 2 - box.y * newScale,
     })
-  }, [tables, stageRef])
+  }, [tables, drawings, stageRef])
 
   const exportPNG = useCallback((filename = "seating-chart.png") => {
-    if (tables.length === 0) return
+    if (tables.length === 0 && drawings.length === 0) return
     exportNameRef.current = filename
     setIsExporting(true)
-  }, [tables])
+  }, [tables, drawings])
 
   useEffect(() => {
     controlsRef.current = { zoomBy, fitToContent, exportPNG }
   }, [controlsRef, zoomBy, fitToContent, exportPNG])
 
-  // Capture once the chrome-free render has committed
   useEffect(() => {
     if (!isExporting) return
     const stage = stageRef.current
     if (!stage) { setIsExporting(false); return }
 
-    const box = contentBBox(tables)
+    const box = contentBBox(tables, drawings)
     const prevScale = stage.scaleX()
     const prevPos = stage.position()
 
     let uri: string | null = null
     try {
-      // Capture at 1:1 regardless of the current viewport transform
       stage.scale({ x: 1, y: 1 })
       stage.position({ x: -box.x, y: -box.y })
       stage.draw()
-      uri = stage.toDataURL({
-        x: 0, y: 0,
-        width: box.width, height: box.height,
-        pixelRatio: 2,
-      })
+      uri = stage.toDataURL({ x: 0, y: 0, width: box.width, height: box.height, pixelRatio: 2 })
     } catch (err) {
       console.error("PNG export failed:", err)
     } finally {
@@ -223,7 +243,33 @@ export function KonvaStage({
       a.download = exportNameRef.current
       a.click()
     }
-  }, [isExporting, tables, stageRef])
+  }, [isExporting, tables, drawings, stageRef])
+
+  // ── Pencil ────────────────────────────────────────────────────────────────
+
+  const pressureOf = (e: KonvaEventObject<PointerEvent>) => {
+    const p = e.evt.pressure
+    // Mice report 0 or a constant 0.5; treat anything falsy as neutral.
+    return typeof p === "number" && p > 0 ? p : 0.5
+  }
+
+  const redrawLive = useCallback(() => {
+    const line = liveLineRef.current
+    if (!line) return
+    line.points(strokeOutline(livePointsRef.current, PENCIL_WIDTH))
+    drawLayerRef.current?.batchDraw()
+  }, [])
+
+  const finishStroke = useCallback(() => {
+    if (!isDrawingRef.current) return
+    isDrawingRef.current = false
+    const pts = livePointsRef.current
+    livePointsRef.current = []
+    liveLineRef.current?.points([])
+    drawLayerRef.current?.batchDraw()
+    // Need at least two samples to be a stroke rather than a stray click
+    if (pts.length >= 6) onDrawEnd(pts)
+  }, [onDrawEnd])
 
   // ── Pointer handling ──────────────────────────────────────────────────────
 
@@ -242,49 +288,73 @@ export function KonvaStage({
       ? Math.min(oldScale * SCALE_BY, MAX_SCALE)
       : Math.max(oldScale / SCALE_BY, MIN_SCALE)
     setScale(newScale)
-    setPos({
-      x: pointer.x - origin.x * newScale,
-      y: pointer.y - origin.y * newScale,
-    })
+    setPos({ x: pointer.x - origin.x * newScale, y: pointer.y - origin.y * newScale })
   }
 
-  const handleMouseDown = (e: KonvaEventObject<MouseEvent>) => {
+  const handlePointerDown = (e: KonvaEventObject<PointerEvent>) => {
     const stage = stageRef.current
     if (!stage) return
+    if (e.evt.button && e.evt.button !== 0) return
+
+    // Space-drag pans regardless of the active tool
+    if (spaceHeldRef.current && e.target === stage) {
+      stage.draggable(true)
+      return
+    }
+    stage.draggable(false)
+
+    if (tool === "pencil") {
+      const p = stage.getRelativePointerPosition()
+      if (!p) return
+      isDrawingRef.current = true
+      livePointsRef.current = [p.x, p.y, pressureOf(e)]
+      redrawLive()
+      return
+    }
+
+    // Eraser: individual strokes handle their own hit; empty space does nothing
+    if (tool === "eraser") return
+
     if (e.target === stage) {
-      if (spaceHeldRef.current) {
-        stage.draggable(true)
-      } else {
-        stage.draggable(false)
-        const p = stage.getRelativePointerPosition()
-        if (p) {
-          marqueeStartRef.current = p
-          isMarqueeingRef.current = false
-        }
+      const p = stage.getRelativePointerPosition()
+      if (p) {
+        marqueeStartRef.current = p
+        isMarqueeingRef.current = false
       }
-    } else {
-      stage.draggable(false)
     }
   }
 
-  const handleMouseMove = () => {
-    if (!marqueeStartRef.current) return
+  const handlePointerMove = () => {
     const stage = stageRef.current
     if (!stage) return
+
+    if (isDrawingRef.current) {
+      const p = stage.getRelativePointerPosition()
+      if (!p) return
+      const pts = livePointsRef.current
+      const lastX = pts[pts.length - 3]
+      const lastY = pts[pts.length - 2]
+      // Threshold in screen space so sampling stays even across zoom levels
+      const min = SAMPLE_DIST / stage.scaleX()
+      if (Math.hypot(p.x - lastX, p.y - lastY) < min) return
+      pts.push(p.x, p.y, 0.5)
+      redrawLive()
+      return
+    }
+
+    if (!marqueeStartRef.current) return
     const p = stage.getRelativePointerPosition()
     if (!p) return
     const start = marqueeStartRef.current
     const dx = p.x - start.x
     const dy = p.y - start.y
-    if (!isMarqueeingRef.current && dx * dx + dy * dy > 25) {
-      isMarqueeingRef.current = true
-    }
-    if (isMarqueeingRef.current) {
-      setMarquee({ x1: start.x, y1: start.y, x2: p.x, y2: p.y })
-    }
+    if (!isMarqueeingRef.current && dx * dx + dy * dy > 25) isMarqueeingRef.current = true
+    if (isMarqueeingRef.current) setMarquee({ x1: start.x, y1: start.y, x2: p.x, y2: p.y })
   }
 
-  const handleMouseUp = useCallback(() => {
+  const handlePointerUp = useCallback(() => {
+    if (isDrawingRef.current) { finishStroke(); return }
+
     const stage = stageRef.current
     if (isMarqueeingRef.current && stage && marqueeStartRef.current) {
       const p = stage.getRelativePointerPosition()
@@ -309,10 +379,9 @@ export function KonvaStage({
     marqueeStartRef.current = null
     isMarqueeingRef.current = false
     setMarquee(null)
-  }, [tables, onMarqueeSelect, onStageClick, stageRef])
+  }, [tables, onMarqueeSelect, onStageClick, stageRef, finishStroke])
 
   const handleDragEnd = (e: KonvaEventObject<DragEvent>) => {
-    // Ignore dragend events that bubbled up from table nodes
     if (e.target !== stageRef.current) return
     setPos({ x: e.target.x(), y: e.target.y() })
     stageRef.current!.draggable(false)
@@ -375,9 +444,10 @@ export function KonvaStage({
           x={pos.x}
           y={pos.y}
           onWheel={handleWheel}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
           onDragEnd={handleDragEnd}
         >
           {/* Background — grid on screen, flat white in exports */}
@@ -386,14 +456,36 @@ export function KonvaStage({
               <Rect x={-10000} y={-10000} width={20000} height={20000} fill="#ffffff" />
             ) : gridPattern ? (
               <Rect
-                x={-10000}
-                y={-10000}
-                width={20000}
-                height={20000}
-                fillPatternImage={gridPattern}
+                x={-10000} y={-10000} width={20000} height={20000}
+                fillPatternImage={asPatternImage(gridPattern)}
                 fillPatternRepeat="repeat"
               />
             ) : null}
+          </Layer>
+
+          {/* Pencil strokes, under the tables so they read as annotations */}
+          <Layer ref={drawLayerRef}>
+            {drawings.map(d => (
+              <KonvaDrawing
+                key={d.id}
+                drawing={d}
+                erasable={tool === "eraser" && !isExporting}
+                scale={scale}
+                onErase={onErase}
+              />
+            ))}
+            {/* In-progress stroke, driven imperatively */}
+            <Line
+              ref={liveLineRef}
+              points={[]}
+              closed
+              fill={PENCIL_COLOR}
+              fillPatternImage={asPatternImage(grainTile(PENCIL_COLOR))}
+              fillPatternRepeat="repeat"
+              fillPriority="pattern"
+              opacity={0.92}
+              listening={false}
+            />
           </Layer>
 
           {/* Table nodes */}
@@ -405,6 +497,7 @@ export function KonvaStage({
                 guestNames={guests.filter(g => g.table_id === t.id).map(g => g.name)}
                 isSelected={!isExporting && selectedIds.has(t.id)}
                 showNames={showNames || isExporting}
+                interactive={tool === "select" && !isExporting}
                 onSelect={onSelect}
                 onDragEnd={handleTableDragEnd}
                 onDoubleClick={onDoubleClick}
@@ -415,7 +508,6 @@ export function KonvaStage({
               />
             ))}
 
-            {/* Marquee selection rectangle */}
             {marquee && (
               <Rect
                 x={Math.min(marquee.x1, marquee.x2)}
