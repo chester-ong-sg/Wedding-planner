@@ -42,6 +42,21 @@ export interface Drawing {
   updated_at: string
 }
 
+/** A free-floating text annotation on the canvas. */
+export interface TextNote {
+  id: string
+  x: number
+  y: number
+  text: string
+  font_size: number
+  color: string
+  /** Wrap width in canvas units. */
+  width: number
+  user_id: string
+  created_at: string
+  updated_at: string
+}
+
 export interface DraggableItemType {
   type: "TABLE" | "GUEST"
   id: string

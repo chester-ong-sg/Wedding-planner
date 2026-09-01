@@ -11,14 +11,15 @@ import type { CanvasControls, PlannerTool } from "@/components/planner/konva-sta
 import { ExportCSV } from "@/components/planner/export-csv"
 import { CsvImport } from "@/components/planner/csv-import"
 import { Button } from "@/components/ui/button"
-import { Plus, Undo2, Redo2, Minus, Maximize2, Edit2, Users, Trash2, ImageDown, Pencil, Eraser, MousePointer2 } from "lucide-react"
+import { Plus, Undo2, Redo2, Minus, Maximize2, Edit2, Users, Trash2, ImageDown, Pencil, Eraser, MousePointer2, Type } from "lucide-react"
 import { AuthProvider } from "@/components/auth-provider"
-import type { Guest, Table, Drawing } from "@/types/planner"
+import type { Guest, Table, Drawing, TextNote } from "@/types/planner"
 import type { ViewMode } from "@/components/planner/sidebar-with-edit"
 import type { Session } from "@supabase/supabase-js"
 import type Konva from "konva"
 import { TABLE_RADIUS, SQ_W, RECT_W, RECT_H } from "@/components/planner/konva-table"
 import { PENCIL_COLOR, PENCIL_WIDTH } from "@/components/planner/konva-drawing"
+import { TEXT_COLOR, TEXT_SIZE, TEXT_WIDTH } from "@/components/planner/konva-text-note"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -51,6 +52,7 @@ interface AppState {
   tables: Table[]
   guests: Guest[]
   drawings: Drawing[]
+  textNotes: TextNote[]
 }
 
 interface DragItem {
@@ -282,9 +284,16 @@ interface PlannerCanvasProps {
   tables: Table[]
   guests: Guest[]
   drawings: Drawing[]
+  textNotes: TextNote[]
+  editingTextId: string | null
   tool: PlannerTool
   onDrawEnd: (points: number[]) => void
   onErase: (id: string) => void
+  onTextCreate: (x: number, y: number) => void
+  onTextEdit: (id: string) => void
+  onTextCommit: (id: string, text: string) => void
+  onTextMove: (id: string, x: number, y: number) => void
+  onTextErase: (id: string) => void
   selectedIds: Set<string>
   stageRef: React.RefObject<Konva.Stage | null>
   controlsRef: React.RefObject<CanvasControls | null>
@@ -298,9 +307,9 @@ interface PlannerCanvasProps {
 }
 
 function PlannerCanvas({
-  tables, guests, drawings, tool, selectedIds, stageRef, controlsRef,
+  tables, guests, drawings, textNotes, editingTextId, tool, selectedIds, stageRef, controlsRef,
   onSelect, onDragEnd, onStageClick, onMarqueeSelect, onDoubleClick, onContextMenu, onUpdateGuest,
-  onDrawEnd, onErase,
+  onDrawEnd, onErase, onTextCreate, onTextEdit, onTextCommit, onTextMove, onTextErase,
 }: PlannerCanvasProps) {
   const [, stageDrop] = useDrop<DragItem, void, never>({
     accept: "guest",
@@ -341,6 +350,8 @@ function PlannerCanvas({
         tables={tables}
         guests={guests}
         drawings={drawings}
+        textNotes={textNotes}
+        editingTextId={editingTextId}
         tool={tool}
         selectedIds={selectedIds}
         onSelect={onSelect}
@@ -351,6 +362,11 @@ function PlannerCanvas({
         onContextMenu={onContextMenu}
         onDrawEnd={onDrawEnd}
         onErase={onErase}
+        onTextCreate={onTextCreate}
+        onTextEdit={onTextEdit}
+        onTextCommit={onTextCommit}
+        onTextMove={onTextMove}
+        onTextErase={onTextErase}
       />
     </div>
   )
@@ -367,9 +383,12 @@ function PlannerContent() {
   const [tables, setTables] = useState<Table[]>([])
   const [guests, setGuests] = useState<Guest[]>([])
   const [drawings, setDrawings] = useState<Drawing[]>([])
+  const [textNotes, setTextNotes] = useState<TextNote[]>([])
+  const [editingTextId, setEditingTextId] = useState<string | null>(null)
   const [tool, setTool] = useState<PlannerTool>("select")
-  // Mirrors `drawings` so saveState can default to it without a stale closure
+  // Mirror state so saveState can default to it without a stale closure
   const drawingsRef = useRef<Drawing[]>([])
+  const textNotesRef = useRef<TextNote[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null)
@@ -392,13 +411,20 @@ function PlannerContent() {
   const canRedo = hist.idx < hist.log.length - 1
 
   useEffect(() => { drawingsRef.current = drawings }, [drawings])
+  useEffect(() => { textNotesRef.current = textNotes }, [textNotes])
 
-  const saveState = useCallback((newTables: Table[], newGuests: Guest[], newDrawings?: Drawing[]) => {
+  const saveState = useCallback((
+    newTables: Table[],
+    newGuests: Guest[],
+    newDrawings?: Drawing[],
+    newTextNotes?: TextNote[],
+  ) => {
     const newState = {
       tables: [...newTables],
       guests: [...newGuests],
-      // Callers that don't touch drawings carry the current set forward
+      // Callers that don't touch these carry the current set forward
       drawings: [...(newDrawings ?? drawingsRef.current)],
+      textNotes: [...(newTextNotes ?? textNotesRef.current)],
     }
     setHist(prev => {
       const newLog = prev.log.slice(0, prev.idx + 1)
@@ -415,6 +441,7 @@ function PlannerContent() {
     setTables([...state.tables])
     setGuests([...state.guests])
     setDrawings([...(state.drawings ?? [])])
+    setTextNotes([...(state.textNotes ?? [])])
     setHist(prev => ({ ...prev, idx: newIdx }))
   }, [canUndo, hist])
 
@@ -426,6 +453,7 @@ function PlannerContent() {
     setTables([...state.tables])
     setGuests([...state.guests])
     setDrawings([...(state.drawings ?? [])])
+    setTextNotes([...(state.textNotes ?? [])])
     setHist(prev => ({ ...prev, idx: newIdx }))
   }, [canRedo, hist])
 
@@ -469,7 +497,7 @@ function PlannerContent() {
       if (e.ctrlKey || e.metaKey || e.altKey) return
       const active = document.activeElement
       if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || (active as HTMLElement).isContentEditable)) return
-      const next = { v: 'select', p: 'pencil', e: 'eraser' }[e.key.toLowerCase()]
+      const next = { v: 'select', p: 'pencil', t: 'text', e: 'eraser' }[e.key.toLowerCase()]
       if (!next) return
       setTool(next as PlannerTool)
       if (next !== 'select') setSelectedIds(new Set())
@@ -491,7 +519,7 @@ function PlannerContent() {
 
   useEffect(() => {
     if (process.env.NODE_ENV === 'development' && !session) {
-      setHist({ log: [{ tables: [], guests: [], drawings: [] }], idx: 0 })
+      setHist({ log: [{ tables: [], guests: [], drawings: [], textNotes: [] }], idx: 0 })
       setLoading(false)
       return
     }
@@ -509,10 +537,18 @@ function PlannerContent() {
       // planner should still load rather than blocking on a missing table.
       if (drawingsError) console.error("Error fetching drawings:", drawingsError)
       const loadedDrawings = drawingsData ?? []
+      const { data: notesData, error: notesError } = await supabase!
+        .from("text_notes").select("*").eq("user_id", session.user.id).order("created_at", { ascending: true })
+      if (notesError) console.error("Error fetching text notes:", notesError)
+      const loadedNotes = notesData ?? []
       setTables(tablesData)
       setGuests(guestsData)
       setDrawings(loadedDrawings)
-      setHist({ log: [{ tables: tablesData, guests: guestsData, drawings: loadedDrawings }], idx: 0 })
+      setTextNotes(loadedNotes)
+      setHist({
+        log: [{ tables: tablesData, guests: guestsData, drawings: loadedDrawings, textNotes: loadedNotes }],
+        idx: 0,
+      })
       setLoading(false)
     }
     fetchData()
@@ -587,6 +623,85 @@ function PlannerContent() {
     }
   }, [tables, guests, isDev, supabase, saveState])
 
+  // ── Text notes ────────────────────────────────────────────────────────────
+
+  const handleTextCreate = useCallback((x: number, y: number) => {
+    const now = new Date().toISOString()
+    const note: TextNote = {
+      id: crypto.randomUUID(),
+      x, y, text: "",
+      font_size: TEXT_SIZE,
+      color: TEXT_COLOR,
+      width: TEXT_WIDTH,
+      user_id: isDev ? "dev" : (session?.user.id ?? ""),
+      created_at: now,
+      updated_at: now,
+    }
+    // Held locally until it has content — an abandoned empty note is discarded
+    // on commit rather than being written to the database.
+    setTextNotes(prev => [...prev, note])
+    setEditingTextId(note.id)
+  }, [isDev, session])
+
+  const handleTextCommit = useCallback(async (id: string, text: string) => {
+    setEditingTextId(null)
+    const existing = textNotesRef.current.find(n => n.id === id)
+    if (!existing) return
+
+    const trimmed = text.trim()
+    if (trimmed.length === 0) {
+      // Never persist an empty note; drop it entirely
+      const next = textNotesRef.current.filter(n => n.id !== id)
+      setTextNotes(next)
+      if (!isDev && existing.text.trim().length > 0) {
+        await supabase!.from("text_notes").delete().eq("id", id)
+        saveState(tables, guests, undefined, next)
+      }
+      return
+    }
+    if (trimmed === existing.text) return
+
+    const next = textNotesRef.current.map(n => n.id === id ? { ...n, text: trimmed } : n)
+    setTextNotes(next)
+    saveState(tables, guests, undefined, next)
+
+    if (!isDev) {
+      // First commit inserts, later ones update
+      const isNew = existing.text.trim().length === 0
+      const { error } = isNew
+        ? await supabase!.from("text_notes").insert({
+            id, x: existing.x, y: existing.y, text: trimmed,
+            font_size: existing.font_size, color: existing.color,
+            width: existing.width, user_id: existing.user_id,
+          })
+        : await supabase!.from("text_notes").update({ text: trimmed }).eq("id", id)
+      if (error) {
+        console.error("Error saving text note:", error)
+        toast.error("Couldn't save that note")
+      }
+    }
+  }, [tables, guests, isDev, supabase, saveState])
+
+  const handleTextMove = useCallback(async (id: string, x: number, y: number) => {
+    const next = textNotesRef.current.map(n => n.id === id ? { ...n, x, y } : n)
+    setTextNotes(next)
+    saveState(tables, guests, undefined, next)
+    if (!isDev) {
+      const { error } = await supabase!.from("text_notes").update({ x, y }).eq("id", id)
+      if (error) console.error("Error moving text note:", error)
+    }
+  }, [tables, guests, isDev, supabase, saveState])
+
+  const handleTextErase = useCallback(async (id: string) => {
+    const next = textNotesRef.current.filter(n => n.id !== id)
+    setTextNotes(next)
+    saveState(tables, guests, undefined, next)
+    if (!isDev) {
+      const { error } = await supabase!.from("text_notes").delete().eq("id", id)
+      if (error) console.error("Error deleting text note:", error)
+    }
+  }, [tables, guests, isDev, supabase, saveState])
+
   // Leaving select mode drops the selection so the highlight doesn't linger
   const handleToolChange = useCallback((next: PlannerTool) => {
     setTool(next)
@@ -598,7 +713,7 @@ function PlannerContent() {
   const handleResetView = () => canvasControls.current?.fitToContent()
 
   const handleExportPNG = () => {
-    if (tables.length === 0 && drawings.length === 0) {
+    if (tables.length === 0 && drawings.length === 0 && textNotes.length === 0) {
       toast.error("Nothing on the canvas to export yet")
       return
     }
@@ -872,9 +987,16 @@ function PlannerContent() {
             tables={tables}
             guests={guests}
             drawings={drawings}
+            textNotes={textNotes}
+            editingTextId={editingTextId}
             tool={tool}
             onDrawEnd={handleDrawEnd}
             onErase={handleErase}
+            onTextCreate={handleTextCreate}
+            onTextEdit={setEditingTextId}
+            onTextCommit={handleTextCommit}
+            onTextMove={handleTextMove}
+            onTextErase={handleTextErase}
             selectedIds={selectedIds}
             stageRef={stageRef}
             controlsRef={canvasControls}
@@ -904,6 +1026,14 @@ function PlannerContent() {
               title="Pencil (P)"
             >
               <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={tool === "text" ? "secondary" : "ghost"}
+              size="icon" className="h-8 w-8 rounded-lg"
+              onClick={() => handleToolChange("text")}
+              title="Text (T) — click the canvas to add a note"
+            >
+              <Type className="h-4 w-4" />
             </Button>
             <Button
               variant={tool === "eraser" ? "secondary" : "ghost"}

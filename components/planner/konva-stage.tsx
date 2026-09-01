@@ -6,7 +6,8 @@ import type Konva from "konva"
 import type { KonvaEventObject } from "konva/lib/Node"
 import { KonvaTable, TABLE_RADIUS, SQ_W, RECT_W, RECT_H, snap } from "./konva-table"
 import { KonvaDrawing, strokeOutline, strokeBounds, grainTile, asPatternImage, PENCIL_COLOR, PENCIL_WIDTH } from "./konva-drawing"
-import type { Table, Guest, Drawing } from "@/types/planner"
+import { KonvaTextNote, TextNoteEditor, TEXT_SIZE, TEXT_LINE_HEIGHT } from "./konva-text-note"
+import type { Table, Guest, Drawing, TextNote } from "@/types/planner"
 
 const SCALE_BY = 1.06
 const MIN_SCALE = 0.1
@@ -23,7 +24,7 @@ const CONTENT_PAD = 60
 /** Minimum pointer travel (screen px) before a new sample is recorded. */
 const SAMPLE_DIST = 2
 
-export type PlannerTool = "select" | "pencil" | "eraser"
+export type PlannerTool = "select" | "pencil" | "text" | "eraser"
 
 interface TableMove {
   id: string
@@ -41,6 +42,8 @@ interface Props {
   tables: Table[]
   guests: Guest[]
   drawings: Drawing[]
+  textNotes: TextNote[]
+  editingTextId: string | null
   selectedIds: Set<string>
   tool: PlannerTool
   stageRef: React.RefObject<Konva.Stage | null>
@@ -53,10 +56,15 @@ interface Props {
   onContextMenu: (id: string, clientX: number, clientY: number) => void
   onDrawEnd: (points: number[]) => void
   onErase: (id: string) => void
+  onTextCreate: (x: number, y: number) => void
+  onTextEdit: (id: string) => void
+  onTextCommit: (id: string, text: string) => void
+  onTextMove: (id: string, x: number, y: number) => void
+  onTextErase: (id: string) => void
 }
 
 /** Bounding box of all canvas content, padded, in canvas coordinates. */
-function contentBBox(tables: Table[], drawings: Drawing[]) {
+function contentBBox(tables: Table[], drawings: Drawing[], textNotes: TextNote[] = []) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   for (const t of tables) {
     const w = t.shape === "rectangular" ? RECT_W : SQ_W
@@ -70,6 +78,14 @@ function contentBBox(tables: Table[], drawings: Drawing[]) {
     minX = Math.min(minX, b.minX - d.width); maxX = Math.max(maxX, b.maxX + d.width)
     minY = Math.min(minY, b.minY - d.width); maxY = Math.max(maxY, b.maxY + d.width)
   }
+  for (const n of textNotes) {
+    // Height is approximated from the wrapped line count; exact metrics would
+    // need the Konva node, and the padding below absorbs the difference.
+    const lines = Math.max(1, n.text.split("\n").length)
+    const h = lines * n.font_size * TEXT_LINE_HEIGHT
+    minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x + n.width)
+    minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y + h)
+  }
   if (!Number.isFinite(minX)) return { x: 0, y: 0, width: 0, height: 0 }
   return {
     x: minX - CONTENT_PAD,
@@ -80,9 +96,9 @@ function contentBBox(tables: Table[], drawings: Drawing[]) {
 }
 
 export function KonvaStage({
-  tables, guests, drawings, selectedIds, tool, stageRef, controlsRef,
+  tables, guests, drawings, textNotes, editingTextId, selectedIds, tool, stageRef, controlsRef,
   onSelect, onDragEnd, onStageClick, onMarqueeSelect, onDoubleClick, onContextMenu,
-  onDrawEnd, onErase,
+  onDrawEnd, onErase, onTextCreate, onTextEdit, onTextCommit, onTextMove, onTextErase,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -163,7 +179,8 @@ export function KonvaStage({
   useEffect(() => {
     const c = stageRef.current?.container()
     if (!c) return
-    c.style.cursor = tool === "pencil" ? "crosshair" : tool === "eraser" ? "cell" : ""
+    c.style.cursor =
+      tool === "pencil" ? "crosshair" : tool === "eraser" ? "cell" : tool === "text" ? "text" : ""
     return () => { c.style.cursor = "" }
   }, [tool, size.width, stageRef])
 
@@ -186,12 +203,12 @@ export function KonvaStage({
   const fitToContent = useCallback(() => {
     const stage = stageRef.current
     if (!stage) return
-    if (tables.length === 0 && drawings.length === 0) {
+    if (tables.length === 0 && drawings.length === 0 && textNotes.length === 0) {
       setScale(INITIAL_SCALE)
       setPos({ x: 0, y: 0 })
       return
     }
-    const box = contentBBox(tables, drawings)
+    const box = contentBBox(tables, drawings, textNotes)
     const newScale = Math.max(
       MIN_SCALE,
       Math.min(MAX_SCALE, Math.min(stage.width() / box.width, stage.height() / box.height)),
@@ -201,13 +218,13 @@ export function KonvaStage({
       x: (stage.width() - box.width * newScale) / 2 - box.x * newScale,
       y: (stage.height() - box.height * newScale) / 2 - box.y * newScale,
     })
-  }, [tables, drawings, stageRef])
+  }, [tables, drawings, textNotes, stageRef])
 
   const exportPNG = useCallback((filename = "seating-chart.png") => {
-    if (tables.length === 0 && drawings.length === 0) return
+    if (tables.length === 0 && drawings.length === 0 && textNotes.length === 0) return
     exportNameRef.current = filename
     setIsExporting(true)
-  }, [tables, drawings])
+  }, [tables, drawings, textNotes])
 
   useEffect(() => {
     controlsRef.current = { zoomBy, fitToContent, exportPNG }
@@ -218,7 +235,7 @@ export function KonvaStage({
     const stage = stageRef.current
     if (!stage) { setIsExporting(false); return }
 
-    const box = contentBBox(tables, drawings)
+    const box = contentBBox(tables, drawings, textNotes)
     const prevScale = stage.scaleX()
     const prevPos = stage.position()
 
@@ -243,7 +260,7 @@ export function KonvaStage({
       a.download = exportNameRef.current
       a.click()
     }
-  }, [isExporting, tables, drawings, stageRef])
+  }, [isExporting, tables, drawings, textNotes, stageRef])
 
   // ── Pencil ────────────────────────────────────────────────────────────────
 
@@ -309,6 +326,15 @@ export function KonvaStage({
       isDrawingRef.current = true
       livePointsRef.current = [p.x, p.y, pressureOf(e)]
       redrawLive()
+      return
+    }
+
+    if (tool === "text") {
+      // Clicking an existing note edits it; clicking blank canvas makes one.
+      // Konva reports the Stage as target only when nothing was hit.
+      if (e.target !== stage) return
+      const p = stage.getRelativePointerPosition()
+      if (p) onTextCreate(p.x, p.y - TEXT_SIZE / 2)
       return
     }
 
@@ -432,8 +458,10 @@ export function KonvaStage({
     else nodeRefs.current.delete(id)
   }
 
+  const editingNote = editingTextId ? textNotes.find(n => n.id === editingTextId) ?? null : null
+
   return (
-    <div ref={containerRef} className="w-full h-full">
+    <div ref={containerRef} className="w-full h-full relative">
       {size.width > 0 && (
         <Stage
           ref={stageRef as React.RefObject<Konva.Stage>}
@@ -522,7 +550,34 @@ export function KonvaStage({
               />
             )}
           </Layer>
+
+          {/* Text annotations sit above tables so notes are never obscured */}
+          <Layer>
+            {textNotes.map(n => (
+              <KonvaTextNote
+                key={n.id}
+                note={n}
+                isEditing={n.id === editingTextId}
+                interactive={(tool === "select" || tool === "text") && !isExporting}
+                erasable={tool === "eraser" && !isExporting}
+                scale={scale}
+                onEdit={onTextEdit}
+                onDragEnd={onTextMove}
+                onErase={onTextErase}
+              />
+            ))}
+          </Layer>
         </Stage>
+      )}
+
+      {/* DOM editor overlaid on the canvas — Konva has no text input */}
+      {editingNote && stageRef.current && (
+        <TextNoteEditor
+          key={editingNote.id}
+          note={editingNote}
+          stage={stageRef.current}
+          onCommit={onTextCommit}
+        />
       )}
     </div>
   )
