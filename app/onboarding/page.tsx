@@ -1,437 +1,364 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { createBrowserClient } from "@supabase/ssr"
+import { ArrowLeft, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Calendar } from "@/components/ui/calendar"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { CalendarHeart, ChevronRight, Calendar as CalendarIcon, Heart, Check, Loader2 } from "lucide-react"
-import { format, parseISO } from "date-fns"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { DatePicker } from "@/components/onboarding/date-picker"
+import { GeneratingScreen } from "@/components/onboarding/generating-screen"
+import { JUST_ONBOARDED_KEY, saveDevPlan, savePlanToSupabase } from "@/lib/wedding-plan/save-plan"
+import { MAX_STORY_LENGTH } from "@/lib/wedding-plan/limits"
 import { cn } from "@/lib/utils"
 import type { GeneratedPlan, WeddingType } from "@/types/dashboard"
 
-type Step = "date" | "guests" | "type" | "loading" | "done"
+type Step = "date" | "guests" | "type" | "story" | "generating"
 
-// Themed steps shown one-by-one with a tick as the plan generates.
-const GEN_STEPS = [
-  "Checking auspicious dates (择日)",
-  "Planning your tea ceremony (敬茶)",
-  "Building your month-by-month checklist",
-  "Working out your SGD budget",
-  "Adding gate-crash games (闯门)",
-  "Listing what to bring on the day",
-  "Finalising your key milestones",
-]
+const STEP_ORDER: Step[] = ["date", "guests", "type", "story"]
 
-// How long each step "takes" before ticking over. The last step holds in
-// progress until the real API response actually arrives.
-const STEP_INTERVAL_MS = 7000
+/** From this many characters the counter turns from muted to a warning colour. */
+const STORY_WARN_AT = 450
+
+/** The generating screen is always shown for at least this long, so it feels considered. */
+const MIN_GENERATING_MS = 2000
+/** Brief pause on "Your plan is ready" before moving on. */
+const READY_BEAT_MS = 600
+
+const MIN_GUESTS = 1
+const MAX_GUESTS = 2000
+const GUEST_PRESETS = [50, 100, 150, 200, 300]
 
 const isDev = process.env.NODE_ENV === "development"
+
+const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+const WEDDING_TYPES: { value: WeddingType; label: string; desc: string }[] = [
+  { value: "rom_only", label: "ROM only", desc: "Solemnisation at the Registry of Marriages. No banquet." },
+  { value: "banquet_only", label: "Banquet only", desc: "A hotel or restaurant banquet, no separate ROM day." },
+  { value: "rom_and_banquet", label: "ROM + Banquet", desc: "The full works: ROM, tea ceremony, gate-crash and banquet." },
+]
 
 export default function OnboardingPage() {
   const router = useRouter()
   const [step, setStep] = useState<Step>("date")
   const [weddingDate, setWeddingDate] = useState("")
-  const [guestCount, setGuestCount] = useState(120)
+  const [guestText, setGuestText] = useState("150")
   const [weddingType, setWeddingType] = useState<WeddingType | "">("")
-  const [completedSteps, setCompletedSteps] = useState(0)
-  const [genComplete, setGenComplete] = useState(false)
+  const [story, setStory] = useState("")
+  // Whether the plan being generated is personalised (drives the loading copy).
+  const [personalised, setPersonalised] = useState(false)
+  const [ready, setReady] = useState(false)
   const [error, setError] = useState("")
 
-  const supabase = (() => {
+  const guestCount = parseInt(guestText, 10)
+  const guestsValid = Number.isInteger(guestCount) && guestCount >= MIN_GUESTS && guestCount <= MAX_GUESTS
+
+  const supabase = useMemo(() => {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
     return url && key ? createBrowserClient(url, key) : null
-  })()
+  }, [])
 
-  // Redirect if already completed onboarding
+  // Onboarding shows once: if this user has already finished it, go straight to
+  // the dashboard. (Dev mode has no auth, so it always allows a re-run.)
   useEffect(() => {
     if (isDev) return
     const check = async () => {
       if (!supabase) return
       const { data: { session } } = await supabase.auth.getSession()
-      if (!session) { router.push("/login"); return }
-      const { data } = await supabase.from("user_profiles").select("onboarding_completed").eq("id", session.user.id).single()
-      if (data?.onboarding_completed) router.push("/dashboard")
+      if (!session) { router.replace("/login"); return }
+      const { data } = await supabase
+        .from("user_profiles")
+        .select("onboarding_completed")
+        .eq("id", session.user.id)
+        .maybeSingle()
+      if (data?.onboarding_completed) router.replace("/dashboard")
     }
     check()
-  }, []) // eslint-disable-line
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Advance the generation checklist one step at a time. The last step stays
-  // "in progress" (capped) until genComplete flips it — so we never show the
-  // whole thing as done before the real plan has come back.
-  useEffect(() => {
-    if (step !== "loading" || genComplete) return
-    const interval = setInterval(() => {
-      setCompletedSteps(prev => Math.min(prev + 1, GEN_STEPS.length - 1))
-    }, STEP_INTERVAL_MS)
-    return () => clearInterval(interval)
-  }, [step, genComplete])
+  /** Ask the API for a plan, then persist it. Throws on any failure. */
+  const generateAndSave = async (storyText: string) => {
+    const answers = { weddingDate, guestCount, weddingType: weddingType as WeddingType }
 
-  const saveToSupabase = async (plan: GeneratedPlan, userId: string) => {
-    if (!supabase) return
-
-    // Upsert profile
-    await supabase.from("user_profiles").upsert({
-      id: userId,
-      wedding_date: weddingDate,
-      guest_count: guestCount,
-      wedding_type: weddingType,
-      onboarding_completed: true,
-      updated_at: new Date().toISOString(),
+    // `story` is only sent when the couple wrote one: no text means no AI call.
+    const res = await fetch("/api/generate-plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(storyText ? { ...answers, story: storyText } : answers),
     })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok || !json.plan) throw new Error(json.error ?? "No plan returned")
+    const plan: GeneratedPlan = json.plan
 
-    // Insert checklist items
-    const checklistRows = plan.checklist.flatMap((group, gi) =>
-      group.tasks.map((t, ti) => ({
-        user_id: userId,
-        month_label: group.month_label,
-        task: t.task,
-        category: t.category ?? null,
-        notes: t.notes ?? null,
-        sort_order: gi * 100 + ti,
-      }))
-    )
-    if (checklistRows.length) await supabase.from("checklist_items").insert(checklistRows)
+    if (isDev) {
+      saveDevPlan(plan, answers)
+      return
+    }
 
-    // Insert budget items
-    const budgetRows = plan.budget.flatMap((group, gi) =>
-      group.items.map((item, ii) => ({
-        user_id: userId,
-        category: group.category,
-        item_name: item.item_name,
-        estimated_amount: item.estimated_amount,
-        notes: item.notes ?? null,
-        sort_order: gi * 100 + ii,
-      }))
-    )
-    if (budgetRows.length) await supabase.from("budget_items").insert(budgetRows)
+    if (!supabase) throw new Error("no-supabase")
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) throw new Error("no-session")
 
-    // Insert milestones
-    const milestoneRows = plan.milestones.map((m, i) => ({
-      user_id: userId,
-      title: m.title,
-      due_date: m.due_date,
-      description: m.description,
-      sort_order: i,
-    }))
-    if (milestoneRows.length) await supabase.from("milestones").insert(milestoneRows)
+    const result = await savePlanToSupabase(supabase, session.user.id, plan, answers)
+    if (!result.ok) throw new Error(result.error)
   }
 
-  // Tick every remaining step to done, hold a beat so the final check is
-  // visible, then continue.
-  const finishSteps = async () => {
-    setGenComplete(true)
-    setCompletedSteps(GEN_STEPS.length)
-    await new Promise(r => setTimeout(r, 900))
-  }
-
-  const handleGenerate = async () => {
-    if (!weddingType) return
-    setCompletedSteps(0)
-    setGenComplete(false)
-    setStep("loading")
+  /** `skip` ignores whatever is in the box and asks for the standard plan. */
+  const handleGenerate = async ({ skip = false } = {}) => {
+    if (!weddingType || !guestsValid || !weddingDate || step === "generating") return
+    const storyText = skip ? "" : story.trim()
     setError("")
+    setReady(false)
+    setPersonalised(storyText.length > 0)
+    setStep("generating")
 
     try {
-      const res = await fetch("/api/generate-plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ weddingDate, guestCount, weddingType }),
-      })
-      const { plan, error: apiErr } = await res.json()
-      if (apiErr || !plan) throw new Error(apiErr ?? "No plan returned")
-
-      if (isDev) {
-        // Dev mode — persist to localStorage so the flow works without auth or
-        // the Supabase tables. (The Anthropic key is server-side and unaffected.)
-        localStorage.setItem("dev_wedding_plan", JSON.stringify(plan))
-        localStorage.setItem("dev_onboarding", JSON.stringify({ weddingDate, guestCount, weddingType }))
-        await finishSteps()
-        setStep("done")
-        router.push("/dashboard")
-        return
-      }
-
-      const { data: { session } } = await supabase!.auth.getSession()
-      if (!session) { router.push("/login"); return }
-      await saveToSupabase(plan, session.user.id)
-      await finishSteps()
-      setStep("done")
-      router.push("/dashboard")
+      // Whichever is slower wins: the real work, or the 2s minimum.
+      await Promise.all([generateAndSave(storyText), wait(MIN_GENERATING_MS)])
+      setReady(true)
+      await wait(READY_BEAT_MS)
+      try { sessionStorage.setItem(JUST_ONBOARDED_KEY, "1") } catch { /* private mode — banner is optional */ }
+      router.replace("/dashboard")
     } catch (err) {
-      console.error(err)
-      setError("Something went wrong generating your plan. Please try again.")
-      setStep("type")
+      console.error("Onboarding failed:", err)
+      const message = err instanceof Error ? err.message : ""
+      if (message === "no-session") { router.replace("/login"); return }
+      if (message === "already-onboarded") { router.replace("/dashboard"); return }
+      setError("Something went wrong putting your plan together. Nothing was lost — please try again.")
+      setStep("story")
     }
   }
 
-  // ─── Slides ──────────────────────────────────────────────────────────────
+  if (step === "generating") return <GeneratingScreen ready={ready} personalised={personalised} />
 
-  if (step === "loading" || step === "done") {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-white gap-10 px-6">
-        <div className="flex flex-col items-center gap-3">
-          <CalendarHeart className="h-11 w-11 text-rose-400 animate-pulse" />
-          <h2 className="text-2xl font-semibold text-gray-900">Generating your wedding plan…</h2>
-          <p className="text-gray-500 text-sm">Personalising everything for your Singapore wedding</p>
-        </div>
-
-        <ul className="flex flex-col gap-3 w-full max-w-sm">
-          {GEN_STEPS.map((label, i) => {
-            const done = i < completedSteps
-            const active = i === completedSteps && !genComplete
-            return (
-              <li
-                key={label}
-                className={cn(
-                  "flex items-center gap-3 rounded-xl border px-4 py-3 transition-all duration-300",
-                  done && "border-emerald-200 bg-emerald-50/60",
-                  active && "border-rose-200 bg-rose-50/60",
-                  !done && !active && "border-gray-100 bg-white"
-                )}
-              >
-                <span className="shrink-0">
-                  {done ? (
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500 animate-in zoom-in duration-200">
-                      <Check className="h-4 w-4 text-white" strokeWidth={3} />
-                    </span>
-                  ) : active ? (
-                    <Loader2 className="h-6 w-6 text-rose-400 animate-spin" />
-                  ) : (
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-gray-200" />
-                  )}
-                </span>
-                <span
-                  className={cn(
-                    "text-sm transition-colors",
-                    done ? "text-gray-900 font-medium" : active ? "text-gray-900" : "text-gray-400"
-                  )}
-                >
-                  {label}
-                </span>
-              </li>
-            )
-          })}
-        </ul>
-      </div>
-    )
-  }
+  const stepIndex = STEP_ORDER.indexOf(step)
 
   return (
-    <div className="min-h-screen bg-white flex flex-col">
-      {/* Progress bar */}
-      <div className="h-1 bg-gray-100">
-        <div
-          className="h-full bg-rose-400 transition-all duration-500"
-          style={{ width: step === "date" ? "33%" : step === "guests" ? "66%" : "100%" }}
-        />
-      </div>
+    <div className="min-h-screen bg-background flex flex-col">
+      <div className="flex-1 flex flex-col items-center px-6 pt-16 pb-12">
+        <div className="w-full max-w-xl flex flex-col items-center">
+          <span className="text-5xl leading-none text-brand-rose select-none" aria-hidden="true">囍</span>
 
-      <div className="flex-1 flex flex-col items-center justify-start px-6 pt-20 pb-12 sm:pt-28">
-        <CalendarHeart className="h-9 w-9 text-rose-400 mb-8" />
-
-        {/* Step 1 — Wedding Date */}
-        {step === "date" && (
-          <SlideWrapper>
-            <StepLabel>Step 1 of 3</StepLabel>
-            <h1 className="text-3xl font-semibold text-gray-900 mb-3">When is your wedding?</h1>
-            <p className="text-gray-500 mb-8">We'll build your checklist around this date.</p>
-            <DatePicker value={weddingDate} onChange={setWeddingDate} />
-            <Button
-              size="lg"
-              className="bg-gray-900 hover:bg-gray-700 px-8 mt-8"
-              disabled={!weddingDate}
-              onClick={() => setStep("guests")}
-            >
-              Continue <ChevronRight className="ml-2 h-4 w-4" />
-            </Button>
-          </SlideWrapper>
-        )}
-
-        {/* Step 2 — Guest Count */}
-        {step === "guests" && (
-          <SlideWrapper>
-            <StepLabel>Step 2 of 3</StepLabel>
-            <h1 className="text-3xl font-semibold text-gray-900 mb-3">How many guests?</h1>
-            <p className="text-gray-500 mb-8">This helps us estimate your budget and seating.</p>
-            <div className="flex items-center gap-4 mb-8">
-              <button
-                className="h-10 w-10 rounded-full border border-gray-300 text-xl hover:bg-gray-50 flex items-center justify-center"
-                onClick={() => setGuestCount(Math.max(10, guestCount - 10))}
-              >−</button>
-              <Input
-                type="number"
-                className="w-28 text-center text-2xl font-semibold h-14 border-gray-300"
-                value={guestCount}
-                min={10}
-                max={2000}
-                onChange={e => setGuestCount(Math.max(10, parseInt(e.target.value) || 10))}
+          {/* Progress */}
+          <div
+            className="mt-8 mb-12 flex w-40 gap-1.5"
+            role="progressbar"
+            aria-valuemin={1}
+            aria-valuemax={STEP_ORDER.length}
+            aria-valuenow={stepIndex + 1}
+            aria-label={`Question ${stepIndex + 1} of ${STEP_ORDER.length}`}
+          >
+            {STEP_ORDER.map((s, i) => (
+              <span
+                key={s}
+                className={cn("h-1 flex-1 rounded-full transition-colors duration-300", i <= stepIndex ? "bg-brand-rose" : "bg-border")}
               />
-              <button
-                className="h-10 w-10 rounded-full border border-gray-300 text-xl hover:bg-gray-50 flex items-center justify-center"
-                onClick={() => setGuestCount(Math.min(2000, guestCount + 10))}
-              >+</button>
-            </div>
-            <div className="flex gap-3 mb-8">
-              {[60, 120, 200, 300].map(n => (
-                <button
-                  key={n}
-                  onClick={() => setGuestCount(n)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-full text-sm border transition-colors",
-                    guestCount === n ? "bg-gray-900 text-white border-gray-900" : "border-gray-300 hover:bg-gray-50"
-                  )}
-                >{n}</button>
-              ))}
-            </div>
-            <div className="flex gap-3">
-              <Button variant="outline" size="lg" onClick={() => setStep("date")}>Back</Button>
-              <Button size="lg" className="bg-gray-900 hover:bg-gray-700 px-8" onClick={() => setStep("type")}>
-                Continue <ChevronRight className="ml-2 h-4 w-4" />
-              </Button>
-            </div>
-          </SlideWrapper>
-        )}
+            ))}
+          </div>
 
-        {/* Step 3 — Wedding Type */}
-        {step === "type" && (
-          <SlideWrapper>
-            <StepLabel>Step 3 of 3</StepLabel>
-            <h1 className="text-3xl font-semibold text-gray-900 mb-3">What are you planning?</h1>
-            <p className="text-gray-500 mb-8">We'll include the right customs and timeline for your celebration.</p>
-            {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
-            <div className="flex flex-col gap-4 w-full max-w-sm mb-8">
-              {([
-                { value: "rom_only", label: "ROM Only", desc: "Civil solemnization at ROM — no banquet", icon: "📋" },
-                { value: "banquet_only", label: "Banquet Only", desc: "Restaurant or hotel banquet celebration", icon: "🥂" },
-                { value: "rom_and_banquet", label: "ROM + Banquet", desc: "Full traditional Singapore Chinese wedding", icon: "🏮" },
-              ] as const).map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setWeddingType(opt.value)}
-                  className={cn(
-                    "flex items-center gap-4 p-4 rounded-xl border-2 text-left transition-all",
-                    weddingType === opt.value
-                      ? "border-gray-900 bg-gray-50"
-                      : "border-gray-200 hover:border-gray-400"
-                  )}
-                >
-                  <span className="text-2xl">{opt.icon}</span>
-                  <div>
-                    <div className="font-semibold text-gray-900">{opt.label}</div>
-                    <div className="text-sm text-gray-500">{opt.desc}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-3">
-              <Button variant="outline" size="lg" onClick={() => setStep("guests")}>Back</Button>
-              <Button
-                size="lg"
-                className="bg-gray-900 hover:bg-gray-700 px-8"
-                disabled={!weddingType}
-                onClick={handleGenerate}
+          {step === "date" && (
+            <Slide>
+              <Question>When&apos;s the big day?</Question>
+              <Hint>Pick a date, even a tentative one. We&apos;ll plan backwards from it.</Hint>
+              <div className="mt-10"><DatePicker value={weddingDate} onChange={setWeddingDate} /></div>
+              <Nav>
+                <Next disabled={!weddingDate} onClick={() => setStep("guests")} />
+              </Nav>
+            </Slide>
+          )}
+
+          {step === "guests" && (
+            <Slide>
+              <Question>How many guests are you expecting?</Question>
+              <Hint>Count both sides, and your parents&apos; friends too. A rough number is fine.</Hint>
+
+              <div className="mt-10 flex flex-col items-center gap-3">
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  autoFocus
+                  min={MIN_GUESTS}
+                  max={MAX_GUESTS}
+                  aria-label="Number of guests"
+                  aria-invalid={!guestsValid}
+                  className="h-16 w-40 rounded-2xl border-2 text-center text-3xl font-semibold md:text-3xl focus-visible:border-brand-rose"
+                  value={guestText}
+                  onChange={e => setGuestText(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && guestsValid) setStep("type") }}
+                />
+                <p className="h-5 text-sm text-muted-foreground">
+                  {guestsValid
+                    ? `About ${Math.ceil(guestCount / 10)} tables of 10, if you're doing a banquet`
+                    : `Enter a number between ${MIN_GUESTS} and ${MAX_GUESTS}`}
+                </p>
+              </div>
+
+              <div className="mt-6 flex gap-2">
+                {GUEST_PRESETS.map(n => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setGuestText(String(n))}
+                    className={cn(
+                      "rounded-full border px-4 py-1.5 text-sm transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                      guestsValid && guestCount === n
+                        ? "border-brand-rose bg-brand-rose-muted font-medium text-foreground"
+                        : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground",
+                    )}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+
+              <Nav>
+                <Back onClick={() => setStep("date")} />
+                <Next disabled={!guestsValid} onClick={() => setStep("type")} />
+              </Nav>
+            </Slide>
+          )}
+
+          {step === "type" && (
+            <Slide>
+              <Question>What are you planning?</Question>
+              <Hint>We&apos;ll tailor the timeline and budget to match.</Hint>
+
+              <RadioGroup
+                value={weddingType}
+                onValueChange={v => setWeddingType(v as WeddingType)}
+                className="mt-10 w-full max-w-md gap-3"
+                aria-label="Wedding type"
               >
-                Generate My Plan <Heart className="ml-2 h-4 w-4 fill-current" />
+                {WEDDING_TYPES.map(opt => (
+                  <label key={opt.value} htmlFor={`type-${opt.value}`} className="block cursor-pointer text-left">
+                    <RadioGroupItem id={`type-${opt.value}`} value={opt.value} className="peer sr-only" />
+                    <div
+                      className={cn(
+                        "rounded-2xl border-2 border-border px-5 py-4 transition-colors hover:border-primary/50",
+                        "peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2",
+                        "peer-data-[state=checked]:border-brand-rose peer-data-[state=checked]:bg-brand-rose-muted",
+                      )}
+                    >
+                      <div className="font-semibold text-foreground">{opt.label}</div>
+                      <div className="mt-0.5 text-sm text-muted-foreground">{opt.desc}</div>
+                    </div>
+                  </label>
+                ))}
+              </RadioGroup>
+
+              <Nav>
+                <Back onClick={() => setStep("guests")} />
+                <Next disabled={!weddingType} onClick={() => setStep("story")} />
+              </Nav>
+            </Slide>
+          )}
+
+          {step === "story" && (
+            <Slide>
+              <Question>Tell us a bit about your wedding</Question>
+              <Hint>Anything you&apos;ve already planned, things you&apos;re excited about, or things you&apos;re worried about.</Hint>
+
+              {error && (
+                <p role="alert" className="mt-6 max-w-lg rounded-xl bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                  {error}
+                </p>
+              )}
+
+              <div className="mt-10 w-full max-w-lg text-left">
+                <textarea
+                  autoFocus
+                  value={story}
+                  maxLength={MAX_STORY_LENGTH}
+                  onChange={e => setStory(e.target.value)}
+                  onKeyDown={e => {
+                    // Ctrl/Cmd + Enter builds the plan; plain Enter is a newline.
+                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && story.trim()) handleGenerate()
+                  }}
+                  aria-label="Tell us a bit about your wedding"
+                  aria-describedby="story-count"
+                  placeholder="e.g. We've booked the ROM for June and can't wait for the tea ceremony, but I'm nervous about keeping both sets of parents happy…"
+                  className={cn(
+                    "block h-56 w-full resize-none rounded-2xl border-2 border-border bg-card p-5 text-base leading-relaxed text-foreground",
+                    "placeholder:text-muted-foreground transition-colors",
+                    "focus-visible:border-brand-rose focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  )}
+                />
+                <div className="mt-2 flex items-center justify-between gap-4 px-1 text-xs">
+                  <span className="text-muted-foreground">Used only to personalise your plan with AI.</span>
+                  <span
+                    id="story-count"
+                    className={cn("tabular-nums", story.length >= STORY_WARN_AT ? "font-medium text-brand-rose" : "text-muted-foreground")}
+                  >
+                    {story.length} / {MAX_STORY_LENGTH}
+                  </span>
+                </div>
+              </div>
+
+              <Nav>
+                <Back onClick={() => { setError(""); setStep("type") }} />
+                <Next disabled={!story.trim()} onClick={() => handleGenerate()} label="Build my plan" />
+              </Nav>
+
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => handleGenerate({ skip: true })}
+                className="mt-3 text-muted-foreground"
+              >
+                Skip, just generate a plan
               </Button>
-            </div>
-          </SlideWrapper>
-        )}
+            </Slide>
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
-function SlideWrapper({ children }: { children: React.ReactNode }) {
+// ─── Small presentational helpers ────────────────────────────────────────────
+
+function Slide({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-4 duration-300">
+    <div className="flex w-full flex-col items-center text-center animate-in fade-in slide-in-from-bottom-2 duration-300 motion-reduce:animate-none">
       {children}
     </div>
   )
 }
 
-function StepLabel({ children }: { children: React.ReactNode }) {
-  return <p className="text-xs uppercase tracking-widest text-rose-400 font-semibold mb-4">{children}</p>
+function Question({ children }: { children: React.ReactNode }) {
+  return <h1 className="text-balance text-3xl font-semibold tracking-tight text-foreground">{children}</h1>
 }
 
-function DatePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [open, setOpen] = useState(false)
-  const selected = value ? parseISO(value) : undefined
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const thisYear = today.getFullYear()
+function Hint({ children }: { children: React.ReactNode }) {
+  return <p className="mt-3 max-w-md text-balance text-muted-foreground">{children}</p>
+}
 
+function Nav({ children }: { children: React.ReactNode }) {
+  return <div className="mt-12 flex items-center gap-3">{children}</div>
+}
+
+function Back({ onClick }: { onClick: () => void }) {
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          className={cn(
-            "flex items-center gap-3 px-5 py-3.5 rounded-2xl border-2 text-lg font-medium transition-all min-w-[280px] justify-between",
-            selected
-              ? "border-gray-900 bg-gray-50 text-gray-900"
-              : "border-gray-200 text-gray-400 hover:border-gray-400"
-          )}
-        >
-          <CalendarIcon className="h-5 w-5 shrink-0 text-rose-400" />
-          <span className="flex-1 text-left">
-            {selected ? format(selected, "EEEE, d MMMM yyyy") : "Pick your wedding date"}
-          </span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        className="w-auto p-0 rounded-3xl shadow-2xl border border-gray-100 overflow-y-auto max-h-[var(--radix-popover-content-available-height)]"
-        align="center"
-        side="bottom"
-        sideOffset={12}
-        avoidCollisions={false}
-      >
-        <Calendar
-          mode="single"
-          selected={selected}
-          onSelect={date => {
-            if (date) {
-              onChange(format(date, "yyyy-MM-dd"))
-              setOpen(false)
-            }
-          }}
-          captionLayout="dropdown-buttons"
-          fromYear={thisYear}
-          toYear={thisYear + 6}
-          numberOfMonths={2}
-          defaultMonth={selected ?? new Date(thisYear + 1, today.getMonth())}
-          disabled={date => date < today}
-          initialFocus
-          classNames={{
-            months: "flex flex-col sm:flex-row gap-6 p-6",
-            month: "space-y-4",
-            caption: "relative flex items-center justify-center h-9",
-            caption_dropdowns: "flex items-center gap-2",
-            caption_label: "hidden",
-            vhidden: "hidden",
-            dropdown: "appearance-none bg-gray-50 hover:bg-gray-100 rounded-xl px-3 py-1.5 text-sm font-semibold text-gray-900 cursor-pointer focus:outline-none focus:ring-2 focus:ring-rose-300 transition-colors",
-            dropdown_month: "relative",
-            dropdown_year: "relative",
-            nav: "flex items-center",
-            nav_button: "h-8 w-8 bg-transparent p-0 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full flex items-center justify-center transition-colors",
-            nav_button_previous: "absolute left-0 top-0",
-            nav_button_next: "absolute right-0 top-0",
-            table: "w-full border-collapse",
-            head_row: "flex",
-            head_cell: "text-gray-400 w-10 font-medium text-xs flex-1 text-center pb-2",
-            row: "flex w-full mt-1.5",
-            cell: "flex-1 text-center text-sm relative p-0",
-            day: "h-10 w-10 p-0 font-normal text-gray-700 rounded-full hover:bg-rose-50 hover:text-rose-600 mx-auto flex items-center justify-center transition-colors",
-            day_selected: "!bg-gray-900 !text-white hover:!bg-gray-900 rounded-full font-semibold",
-            day_today: "border border-rose-300 text-rose-500 font-semibold",
-            day_outside: "text-gray-300",
-            day_disabled: "text-gray-200 cursor-not-allowed hover:bg-transparent hover:text-gray-200",
-          }}
-        />
-      </PopoverContent>
-    </Popover>
+    <Button type="button" variant="ghost" size="lg" onClick={onClick} className="text-muted-foreground">
+      <ArrowLeft /> Back
+    </Button>
+  )
+}
+
+function Next({ onClick, disabled, label = "Continue" }: { onClick: () => void; disabled?: boolean; label?: string }) {
+  return (
+    <Button
+      type="button"
+      size="lg"
+      disabled={disabled}
+      onClick={onClick}
+      className="bg-brand-rose px-8 text-white hover:brightness-95"
+    >
+      {label} <ArrowRight />
+    </Button>
   )
 }

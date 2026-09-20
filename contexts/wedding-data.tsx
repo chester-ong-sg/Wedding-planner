@@ -4,6 +4,7 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 import { useRouter } from "next/navigation"
 import { createBrowserClient } from "@supabase/ssr"
 import type { ChecklistItem, BudgetItem, Milestone, UserProfile, GeneratedPlan } from "@/types/dashboard"
+import { DEV_PLAN_KEY, DEV_ANSWERS_KEY, DEV_ROWS_KEY } from "@/lib/wedding-plan/save-plan"
 
 const isDev = process.env.NODE_ENV === "development"
 
@@ -38,13 +39,38 @@ export function WeddingDataProvider({ children }: { children: ReactNode }) {
   })()
 
   const loadDevData = useCallback(() => {
-    const raw = localStorage.getItem("dev_wedding_plan")
-    const meta = localStorage.getItem("dev_onboarding")
-    if (!raw) { router.push("/onboarding"); return }
-    const plan: GeneratedPlan = JSON.parse(raw)
-    const { weddingDate, guestCount, weddingType } = meta ? JSON.parse(meta) : {}
+    let plan: GeneratedPlan
+    let meta: { weddingDate?: string; guestCount?: number; weddingType?: UserProfile["wedding_type"] } = {}
+    let saved: { checklist: ChecklistItem[]; budget: BudgetItem[]; milestones: Milestone[] } | null = null
+    try {
+      const raw = localStorage.getItem(DEV_PLAN_KEY)
+      if (!raw) { router.push("/onboarding"); return }
+      plan = JSON.parse(raw)
+      const rawMeta = localStorage.getItem(DEV_ANSWERS_KEY)
+      if (rawMeta) meta = JSON.parse(rawMeta)
+      const rawRows = localStorage.getItem(DEV_ROWS_KEY)
+      if (rawRows) saved = JSON.parse(rawRows)
+    } catch {
+      // Corrupt local data — start over rather than crash the dashboard.
+      router.push("/onboarding")
+      return
+    }
+    const { weddingDate, guestCount, weddingType } = meta
 
-    setProfile({ id: "dev", wedding_date: weddingDate, guest_count: guestCount, wedding_type: weddingType, onboarding_completed: true })
+    setProfile({
+      id: "dev",
+      wedding_date: weddingDate ?? null,
+      guest_count: guestCount ?? null,
+      wedding_type: weddingType ?? null,
+      onboarding_completed: true,
+    })
+
+    // Rows the user has edited or ticked off take precedence over the raw plan.
+    if (saved) {
+      setChecklist(saved.checklist); setBudget(saved.budget); setMilestones(saved.milestones)
+      setLoading(false)
+      return
+    }
 
     const cl: ChecklistItem[] = plan.checklist.flatMap((g, gi) =>
       g.tasks.map((t, ti) => ({
@@ -71,6 +97,15 @@ export function WeddingDataProvider({ children }: { children: ReactNode }) {
     setChecklist(cl); setBudget(bl); setMilestones(ml)
     setLoading(false)
   }, [router])
+
+  // Dev mode has no database, so write edits back to localStorage. Without this
+  // an "editable" plan would silently lose every edit on refresh.
+  useEffect(() => {
+    if (!isDev || loading) return
+    try {
+      localStorage.setItem(DEV_ROWS_KEY, JSON.stringify({ checklist, budget, milestones }))
+    } catch { /* storage full or blocked — edits just won't survive a refresh */ }
+  }, [loading, checklist, budget, milestones])
 
   useEffect(() => {
     if (isDev) { loadDevData(); return }

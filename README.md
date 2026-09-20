@@ -3,13 +3,13 @@
 [![Deploy to GitHub Pages](https://github.com/chester-ong-sg/Wedding-planner/actions/workflows/nextjs.yml/badge.svg)](https://github.com/chester-ong-sg/Wedding-planner/actions/workflows/nextjs.yml)
 ![Version](https://img.shields.io/badge/version-0.4.0-blue)
 
-A web application for planning a Singapore wedding end to end. Answer three questions and an AI generates a personalised, fully-editable plan — a month-by-month checklist, an SGD budget breakdown, and key milestones grounded in real Singapore Chinese wedding customs. Then arrange your seating on an infinite drag-and-drop canvas.
+A web application for planning a Singapore wedding end to end. Answer a few questions (and, optionally, tell us about your wedding in your own words) and an AI generates a personalised, fully-editable plan — a month-by-month checklist, an SGD budget breakdown, and key milestones grounded in real Singapore Chinese wedding customs. Then arrange your seating on an infinite drag-and-drop canvas.
 
 ---
 
 ## What's New in v0.4.0
 
-- **AI-powered onboarding** — a 3-question flow (date, guest count, wedding type) that generates a complete, Singapore-specific wedding plan via the Anthropic API.
+- **AI-powered onboarding** — a 4-step flow (date, guest count, wedding type, and an optional free-text note about your wedding) that generates a complete, Singapore-specific wedding plan. **If you write a note, `claude-sonnet-4-5` writes a plan around it; if you skip it, a built-in plan is used and no tokens are spent** (see below).
 - **Dashboard** — a new `/dashboard` home with tabs for **Wedding Plan** (milestones, checklist, budget) and **Seating Planner**.
 - **Fully editable plan** — every checklist task, budget line, and milestone is inline-editable; budget actuals turn red when over the estimate.
 - **Table / Grid view toggle** in the seating planner sidebar, plus Email & Contact columns in the spreadsheet view.
@@ -21,11 +21,14 @@ A web application for planning a Singapore wedding end to end. Answer three ques
 
 ### AI Wedding Plan
 
-- **Onboarding** (`/onboarding`): three questions presented one at a time —
+- **Onboarding** (`/onboarding`): four steps presented one at a time —
   1. Wedding date (calendar picker)
   2. Guest count (stepper + quick presets)
   3. Wedding type (ROM only / Banquet only / ROM + Banquet)
-- **Live generation checklist**: while the plan generates, themed steps tick off one by one (择日 → 敬茶 → checklist → budget → 闯门 → items to bring → milestones), with the final step gated on the real API response.
+  4. Optional free text, 500 characters — what's already planned, what you're excited or worried about. "Skip, just generate a plan" uses the standard plan instead
+- **Celebratory generating screen**: a breathing 囍 with drifting sparkles and rotating status lines (择日, 敬茶, 闯门, 红包…). Always shown for at least 2 seconds, longer if generation takes longer; respects `prefers-reduced-motion`.
+- **Seating planner pre-filled**: one placeholder guest (`Guest 1`…`Guest N`, name only) per expected guest is added, unassigned, so tables can be arranged straight away and names filled in later. Skipped if the user already has guests; capped at 1,000.
+- **Onboarding shows once**: `user_profiles.onboarding_completed` is set only after the plan is fully saved, so a failed save can never strand someone on an empty dashboard. Login, register and the email/OAuth callback all route by that flag.
 - **Singapore-grounded output**: estimates and timelines are anchored to real local wedding data — hotel ballroom pricing (~$185–195/pax), vendor fee ranges, the gate-crash → tea ceremony → march-in → banquet day-of flow, and customs (择日, 过大礼, 闯门, 敬茶, angpao, ROM).
 - **Wedding-type aware**: ROM-only plans skip banquet logistics; banquet-only plans skip ROM tasks.
 
@@ -83,7 +86,7 @@ A web application for planning a Singapore wedding end to end. Answer three ques
 | Framework | Next.js 15 (App Router) |
 | Language | TypeScript |
 | Styling | Tailwind CSS + Shadcn UI |
-| AI | Anthropic API (`@anthropic-ai/sdk`, `claude-haiku-4-5`) via a server-side route |
+| AI | Anthropic API (`@anthropic-ai/sdk`, `claude-sonnet-4-5`) via a server-side route, only when the couple wrote a note; otherwise a built-in plan |
 | Drag & Drop | React DnD (guests) + custom mouse events (tables) |
 | Database & Auth | Supabase (PostgreSQL + Auth, RLS) |
 | Deployment | GitHub Pages via GitHub Actions |
@@ -111,7 +114,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 - Supabase keys: dashboard → **Settings → API**.
-- `ANTHROPIC_API_KEY`: [console.anthropic.com](https://console.anthropic.com) → **API Keys**. Kept **server-side only** (used in `app/api/generate-plan/route.ts`); never exposed to the client. If unset, the API route returns a built-in mock plan so the UI still works.
+- `ANTHROPIC_API_KEY`: [console.anthropic.com](https://console.anthropic.com) → **API Keys**. Used **only** when a couple writes a free-text note in onboarding. Kept **server-side only** (`lib/wedding-plan/generate-plan-ai.ts`), and the AI path is available to signed-in users only, since each call costs real money. If unset, everything still works: onboarding falls back to the built-in plan.
 
 ### 3. Set up the database
 
@@ -133,17 +136,19 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-> **Dev mode (no auth / no migration required):** In development the app persists the generated plan and seating data to `localStorage` instead of Supabase, so you can run the full onboarding → dashboard → planner flow without logging in or running the SQL migration. The Anthropic key is still used (server-side) to generate real plans. Data resets when you clear browser storage.
+> **Dev mode (no auth / no migration required):** In development the app persists the generated plan and seating data to `localStorage` instead of Supabase, so you can run the full onboarding → dashboard → planner flow without logging in or running the SQL migration. A personalised plan still calls the Anthropic API (from the server) if a key is set; without one the built-in plan is used. Edits and ticked-off tasks are written back to `localStorage` and survive a refresh; data resets when you clear browser storage.
 
 ---
 
-## How the AI Plan Generation Works
+## How Plan Generation Works
 
 ```
-/onboarding  ──POST──▶  /api/generate-plan  ──▶  Anthropic API (claude-haiku-4-5)
-   (3 Qs)                  (server route,            │
-                            holds API key)           ▼
-                                              GeneratedPlan JSON
+/onboarding  ──POST──▶  /api/generate-plan ──┬─ note written ─▶ claude-sonnet-4-5 ─▶ validate ─┐
+  (4 steps)               (server route)       │                                    (any failure ─┐)  │
+                                               └─ skipped ───────▶ buildMockPlan() ◀──────┴──────┘
+                                                                          │
+                                                                          ▼
+                                                   GeneratedPlan JSON (identical shape either way)
                                                      │
         dev: localStorage  ◀────────────────────────┤
         prod: Supabase (user_profiles, checklist_items, budget_items, milestones)
@@ -152,10 +157,12 @@ Open [http://localhost:3000](http://localhost:3000).
                                                /dashboard
 ```
 
-- The prompt is bounded (5 checklist sections, 5 budget categories, 4–5 milestones, terse text) and anchored to a real Singapore wedding reference so estimates scale sensibly with guest count. Generation takes ~40s.
-- `max_tokens` is capped at 5000 and the route rejects truncated responses rather than returning broken JSON. Token usage is logged per call.
-- **Cost:** ~1.4 cents per onboarding on `claude-haiku-4-5` (~1,400 input + ~2,400 output tokens). Output tokens dominate, so the prompt keeps generated text terse. Set a spend limit in the Anthropic console.
-- See `app/api/generate-plan/route.ts` for the prompt and reference data, and `docs/ai-wedding-plan.md` for the full subsystem write-up.
+- `lib/wedding-plan/mock-plan.ts` is a realistic Singapore Chinese wedding (ROM + banquet, ~150 guests, ~6 months out). It is stamped with the couple's real date and headcount: month-by-month checklist labels, milestone dates counted back from the wedding date, per-guest/per-table budget lines scaled to guest count, and rows dropped for wedding types they don't apply to. Close dates fold overdue months into a "Start now" group.
+- **When the AI is used:** only if the couple wrote a note (step 4) *and* a key is configured *and* they're signed in (dev is exempt). The prompt in `lib/wedding-plan/ai-prompt.ts` carries the date, guest count, wedding type and the note, grounded in real Singapore wedding costs. The note is fenced off as untrusted text, so it can't hijack the prompt.
+- **Fallback:** a skipped note, a missing key, a timeout (100s), a truncated reply, malformed JSON or a reply that doesn't match the plan shape all fall back to the built-in plan, so onboarding never dead-ends. Output is validated by `lib/wedding-plan/validate-plan.ts` before it is saved.
+- **Cost:** about 2,000 input + 2,500–3,000 output tokens, roughly **$0.04–0.05 and 35–50 seconds** per personalised plan. Set a spend limit in the Anthropic console.
+- The mock's prices are ballpark estimates, not quotes; it deliberately hedges ROM booking rules and fees ("check the ROM website") rather than stating figures that may be stale.
+- See `docs/ai-wedding-plan.md` for the full subsystem write-up.
 
 ---
 
@@ -165,14 +172,14 @@ Open [http://localhost:3000](http://localhost:3000).
 app/
   layout.tsx              # Root layout (Supabase provider, Toaster)
   page.tsx                # Landing page
-  onboarding/page.tsx     # 3-question AI onboarding + live generation checklist
+  onboarding/page.tsx     # 3-question onboarding, 2s+ generating screen, saves the plan
   dashboard/
     layout.tsx            # Dashboard header
     page.tsx              # Plan tabs (Wedding Plan / Seating Planner)
   planner/
     layout.tsx            # Sticky header
     page.tsx              # Seating canvas + all CRUD logic
-  api/generate-plan/route.ts   # Server route — Anthropic call, SG grounding prompt
+  api/generate-plan/route.ts   # Server route — validates input; AI plan if a note was written, else the built-in plan
   login/page.tsx
   register/page.tsx
   auth/callback/route.ts

@@ -1,8 +1,12 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useWeddingData } from "@/contexts/wedding-data"
-import { Flag, ListChecks, Wallet, LayoutGrid, ArrowRight } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { JUST_ONBOARDED_KEY } from "@/lib/wedding-plan/save-plan"
+import { placeholderGuestCount } from "@/lib/wedding-plan/placeholder-guests"
+import { Flag, ListChecks, Wallet, LayoutGrid, ArrowRight, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 function weddingTypeLabel(t: string | null) {
@@ -13,7 +17,18 @@ function weddingTypeLabel(t: string | null) {
 }
 
 export default function DashboardPage() {
-  const { loading, profile, checklist, budget, milestones } = useWeddingData()
+  const { loading, profile, checklist, budget, milestones, toggleChecklist } = useWeddingData()
+
+  // One-time welcome, set by onboarding just before it redirects here.
+  const [showWelcome, setShowWelcome] = useState(false)
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(JUST_ONBOARDED_KEY)) {
+        sessionStorage.removeItem(JUST_ONBOARDED_KEY)
+        setShowWelcome(true)
+      }
+    } catch { /* storage blocked — the welcome is optional */ }
+  }, [])
 
   if (loading) {
     return (
@@ -53,8 +68,42 @@ export default function DashboardPage() {
     return `${diff}d away`
   }
 
+  // Onboarding seeds one placeholder guest per expected guest (capped).
+  const seededGuests = placeholderGuestCount(profile?.guest_count ?? 0)
+
+  // First few tasks still to do, in plan order — so the plan is visible on landing.
+  const upNext = [...checklist]
+    .filter(i => !i.is_completed)
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .slice(0, 5)
+
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
+      {/* First-arrival welcome */}
+      {showWelcome && (
+        <div className="mb-8 flex items-start gap-4 rounded-2xl border border-[hsl(38,40%,84%)] bg-brand-gold-muted p-5">
+          <span className="text-3xl leading-none text-brand-rose select-none" aria-hidden="true">囍</span>
+          <div className="flex-1">
+            <p className="font-semibold text-foreground">Your plan is ready.</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {checklist.length} tasks, {milestones.length} milestones and a {fmt(totalEstimated)} budget, all built around
+              your date. Start with the tasks below. Everything is editable.
+              {seededGuests > 0 && (
+                <> We&apos;ve also put {seededGuests} placeholder guests in your <Link href="/planner" className="underline underline-offset-2 hover:text-foreground">Seating planner</Link> — rename them as your list firms up.</>
+              )}
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label="Dismiss welcome message"
+            onClick={() => setShowWelcome(false)}
+            className="rounded-lg p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Hero strip */}
       <div className="mb-10">
         <h1 className="text-2xl font-semibold text-foreground">Your Wedding Plan</h1>
@@ -185,6 +234,35 @@ export default function DashboardPage() {
           </p>
         </Link>
       </div>
+
+      {/* Up next */}
+      {upNext.length > 0 && (
+        <section className="mt-10" aria-labelledby="up-next-heading">
+          <div className="mb-3 flex items-baseline justify-between">
+            <h2 id="up-next-heading" className="text-lg font-semibold text-foreground">Up next</h2>
+            <Link href="/dashboard/checklist" className="text-sm text-primary hover:underline underline-offset-4">
+              See the full checklist
+            </Link>
+          </div>
+          <ul className="divide-y divide-border rounded-2xl border border-border bg-card">
+            {upNext.map(item => (
+              <li key={item.id} className="flex items-start gap-3 px-5 py-3.5">
+                <Checkbox
+                  id={`next-${item.id}`}
+                  className="mt-0.5"
+                  checked={item.is_completed}
+                  onCheckedChange={checked => toggleChecklist(item.id, !!checked)}
+                />
+                <label htmlFor={`next-${item.id}`} className="min-w-0 flex-1 cursor-pointer">
+                  <span className="block text-sm text-foreground">{item.task}</span>
+                  {item.notes && <span className="mt-0.5 block text-xs text-muted-foreground">{item.notes}</span>}
+                </label>
+                <span className="shrink-0 text-xs text-muted-foreground">{item.month_label}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   )
 }

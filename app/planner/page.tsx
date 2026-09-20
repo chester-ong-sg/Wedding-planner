@@ -20,6 +20,8 @@ import type Konva from "konva"
 import { TABLE_RADIUS, SQ_W, RECT_W, RECT_H } from "@/components/planner/konva-table"
 import { PENCIL_COLOR, PENCIL_WIDTH } from "@/components/planner/konva-drawing"
 import { TEXT_COLOR, TEXT_SIZE, TEXT_WIDTH } from "@/components/planner/konva-text-note"
+import { placeholderGuestNames } from "@/lib/wedding-plan/placeholder-guests"
+import { DEV_ANSWERS_KEY } from "@/lib/wedding-plan/save-plan"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -519,7 +521,20 @@ function PlannerContent() {
 
   useEffect(() => {
     if (process.env.NODE_ENV === 'development' && !session) {
-      setHist({ log: [{ tables: [], guests: [], drawings: [], textNotes: [] }], idx: 0 })
+      // Dev keeps everything in memory, so mirror what onboarding does in
+      // Supabase: start with one placeholder guest per expected guest.
+      let seeded: Guest[] = []
+      try {
+        const answers = JSON.parse(localStorage.getItem(DEV_ANSWERS_KEY) ?? "null")
+        const now = new Date().toISOString()
+        seeded = placeholderGuestNames(answers?.guestCount ?? 0).map(name => ({
+          id: crypto.randomUUID(), name, rsvp_status: "pending" as const,
+          user_id: "dev", created_at: now, updated_at: now,
+        }))
+      } catch { /* no or corrupt onboarding answers — start empty */ }
+      setGuests(seeded)
+      // In the first history entry so undo can never remove the seeded guests.
+      setHist({ log: [{ tables: [], guests: seeded, drawings: [], textNotes: [] }], idx: 0 })
       setLoading(false)
       return
     }

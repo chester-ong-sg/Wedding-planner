@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { Fragment, useState } from "react"
 import { Input } from "@/components/ui/input"
 import { Pencil, Check, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -51,7 +51,11 @@ export function BudgetSection({ items, onUpdate }: Props) {
   const isEditing = (id: string, field: EditField) =>
     editingCell?.id === id && editingCell?.field === field
 
-  const EditableCell = ({
+  // A render function, deliberately NOT a component: declaring a component inside
+  // another gives it a new identity every render, so React would unmount and
+  // remount the <input> on every keystroke — losing the caret and breaking IME
+  // composition (which matters for Chinese notes like 择日).
+  const renderCell = ({
     item, field, display, numeric, className,
   }: {
     item: BudgetItem; field: EditField; display: string; numeric?: boolean; className?: string
@@ -108,8 +112,8 @@ export function BudgetSection({ items, onUpdate }: Props) {
               const catEstimated = groupItems.reduce((s, i) => s + (i.estimated_amount ?? 0), 0)
               const catActual = groupItems.reduce((s, i) => s + (i.actual_amount ?? 0), 0)
               return (
-                <>
-                  <tr key={`${category}-header`} className="bg-secondary/50 border-t border-b border-border">
+                <Fragment key={category}>
+                  <tr className="bg-secondary/50 border-t border-b border-border">
                     <td colSpan={4} className="px-3 py-1.5">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-semibold text-primary/70 uppercase tracking-wide">{category}</span>
@@ -119,21 +123,21 @@ export function BudgetSection({ items, onUpdate }: Props) {
                   </tr>
                   {groupItems.sort((a, b) => a.sort_order - b.sort_order).map(item => (
                     <tr key={item.id} className="border-b border-border hover:bg-secondary/40 transition-colors">
-                      <EditableCell item={item} field="item_name" display={item.item_name} />
-                      <EditableCell
-                        item={item} field="estimated_amount"
-                        display={fmt(item.estimated_amount)}
-                        numeric className="text-right tabular-nums"
-                      />
-                      <EditableCell
-                        item={item} field="actual_amount"
-                        display={item.actual_amount != null ? fmt(item.actual_amount) : ""}
-                        numeric className="text-right tabular-nums"
-                      />
-                      <EditableCell item={item} field="notes" display={item.notes ?? ""} className="text-xs text-muted-foreground/70" />
+                      {renderCell({ item, field: "item_name", display: item.item_name })}
+                      {renderCell({
+                        item, field: "estimated_amount",
+                        display: fmt(item.estimated_amount),
+                        numeric: true, className: "text-right tabular-nums",
+                      })}
+                      {renderCell({
+                        item, field: "actual_amount",
+                        display: item.actual_amount != null ? fmt(item.actual_amount) : "",
+                        numeric: true, className: "text-right tabular-nums",
+                      })}
+                      {renderCell({ item, field: "notes", display: item.notes ?? "", className: "text-xs text-muted-foreground/70" })}
                     </tr>
                   ))}
-                </>
+                </Fragment>
               )
             })}
             <tr className="bg-secondary border-t-2 border-border font-semibold">
