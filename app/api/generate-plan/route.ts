@@ -8,11 +8,16 @@ import { createClient } from "@/utils/supabase/server"
 import type { GeneratedPlan, WeddingType } from "@/types/dashboard"
 
 /**
- * A personalised plan takes a while to write. Vercel caps this per plan; if your
- * plan's limit is lower than this the platform will use its own cap, and the AI
- * call's timeout (see generate-plan-ai.ts) then can't fire first.
+ * A personalised plan takes ~35–50s to write. This is 60s because that is the
+ * highest value every Vercel plan accepts: a larger value (this was 120) is
+ * rejected AT DEPLOY TIME on plans that cap lower, with `invalid_max_duration`,
+ * failing the whole deployment even though the build succeeded.
+ *
+ * The AI call gives up at AI_TIMEOUT_MS (see generate-plan-ai.ts), leaving
+ * enough headroom under this limit for the instant mock fallback to respond.
+ * A project with Fluid Compute enabled can raise both for more headroom.
  */
-export const maxDuration = 120
+export const maxDuration = 60
 
 const WEDDING_TYPES: WeddingType[] = ["rom_only", "banquet_only", "rom_and_banquet"]
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/

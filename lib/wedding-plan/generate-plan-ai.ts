@@ -16,9 +16,11 @@ const MAX_TOKENS = 6000
 
 /**
  * Give up after this long so the caller can fall back to the mock plan instead
- * of hanging. Must stay below the route's `maxDuration`.
+ * of hanging. MUST stay comfortably below the route's `maxDuration` (60s), or the
+ * platform kills the request before the fallback can respond. Measured plans took
+ * 35–47s, so 52s leaves room for normal variance without risking the cap.
  */
-export const AI_TIMEOUT_MS = 100_000
+export const AI_TIMEOUT_MS = 52_000
 
 // claude-sonnet-4-5 list price, USD per million tokens — used only for the cost log.
 const PRICE_IN_PER_M = 3
